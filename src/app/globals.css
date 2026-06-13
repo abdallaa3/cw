@@ -49,6 +49,25 @@ button {
   box-shadow: 0 12px 30px rgba(16, 32, 51, 0.07);
 }
 
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.35);
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--border);

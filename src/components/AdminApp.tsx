@@ -189,16 +189,16 @@ export function AdminApp({ page }: { page: PageKey }) {
   }
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-slate-200 bg-white/90 p-5 backdrop-blur-xl lg:block">
-        <div className="mb-8 flex items-center gap-3">
+    <div className="flex min-h-screen lg:h-screen lg:overflow-hidden">
+      <aside className="no-print fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-slate-200 bg-white/95 p-5 backdrop-blur-xl lg:flex">
+        <div className="mb-6 flex shrink-0 items-center gap-3">
           <Image src="/logo.jpg" alt="Code Wave logo" width={56} height={56} className="rounded-2xl object-cover" />
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">Code Wave</p>
             <h1 className="text-lg font-black">Academy</h1>
           </div>
         </div>
-        <nav className="space-y-1">
+        <nav className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = item.key === page;
@@ -210,27 +210,35 @@ export function AdminApp({ page }: { page: PageKey }) {
             );
           })}
         </nav>
-        <button onClick={logout} className="btn btn-soft mt-8 w-full">
+        <button onClick={logout} className="btn btn-soft mt-6 w-full shrink-0">
           <LogOut size={16} /> Logout
         </button>
       </aside>
 
-      <div className="flex min-h-screen flex-1 flex-col lg:pl-72">
+      <div className="flex min-h-screen flex-1 flex-col lg:h-screen lg:min-h-0 lg:pl-72">
         <header className="no-print sticky top-0 z-20 border-b border-slate-200 bg-white/80 px-5 py-4 backdrop-blur-xl">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-bold text-blue-600">{academyName}</p>
-              <h2 className="text-2xl font-black capitalize text-slate-950">{page.replace("auditlog", "audit log")}</h2>
+          <div className="mx-auto max-w-7xl">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <Image src="/logo.jpg" alt="Code Wave logo" width={44} height={44} className="rounded-xl object-cover lg:hidden" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-blue-600">{academyName}</p>
+                  <h2 className="truncate text-2xl font-black capitalize text-slate-950">{page.replace("auditlog", "audit log")}</h2>
+                </div>
+              </div>
+              <button onClick={logout} className="btn btn-soft hidden sm:inline-flex lg:hidden">
+                <LogOut size={16} /> Logout
+              </button>
             </div>
-            <div className="hidden items-center gap-2 rounded-2xl bg-slate-100 p-1 lg:flex">
-              {navItems.slice(0, 5).map((item) => (
-                <Link key={item.key} href={item.href} className={`rounded-xl px-3 py-2 text-xs font-bold ${item.key === page ? "bg-white text-blue-600 shadow-sm" : "text-slate-500"}`}>{item.label}</Link>
+            <nav className="sidebar-scroll mt-4 flex gap-2 overflow-x-auto rounded-2xl bg-slate-100 p-1 lg:hidden">
+              {navItems.map((item) => (
+                <Link key={item.key} href={item.href} className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold ${item.key === page ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>{item.label}</Link>
               ))}
-            </div>
+            </nav>
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 px-5 py-6">
+        <main className="mx-auto w-full max-w-7xl flex-1 px-5 py-6 lg:min-h-0 lg:overflow-y-auto">
           {error ? <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 font-semibold text-red-700">{error}</div> : null}
           {toast ? <div className="no-print fixed right-5 top-5 z-50 rounded-2xl bg-slate-950 px-5 py-3 font-bold text-white shadow-2xl">{toast}</div> : null}
           {page === "dashboard" ? renderDashboard() : null}
