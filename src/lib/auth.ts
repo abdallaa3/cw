@@ -17,8 +17,8 @@ function sign(payload: string) {
 }
 
 export function verifyPassword(password: string) {
-  const expected = process.env.ADMIN_PASSWORD || "code.wave";
-  const left = Buffer.from(password);
+  const expected = (process.env.ADMIN_PASSWORD || "code.wave").trim();
+  const left = Buffer.from(password.trim());
   const right = Buffer.from(expected);
   if (left.length !== right.length) return false;
   return timingSafeEqual(left, right);

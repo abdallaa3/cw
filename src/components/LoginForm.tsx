@@ -16,20 +16,31 @@ export function LoginForm() {
     setError("");
     setLoading(true);
 
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
 
-    setLoading(false);
-    if (!response.ok) {
-      setError("Invalid password. Please try again.");
-      return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(
+          response.status === 401
+            ? "Invalid password. Please try again."
+            : payload.error || "Login failed. Check server configuration.",
+        );
+        return;
+      }
+
+      router.push("/dashboard");
+      router.refresh();
+    } catch (error) {
+      console.error("Login request failed", error);
+      setError("Login failed. Please check your connection and server configuration.");
+    } finally {
+      setLoading(false);
     }
-
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
