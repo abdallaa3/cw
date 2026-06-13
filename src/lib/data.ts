@@ -209,6 +209,8 @@ export async function createPayment(payload: Record<string, unknown>) {
   const newPaidAmount = Number(student.paid_amount || 0) + paymentAmount;
   const calc = calculatePayment(student.course_price, newPaidAmount);
   const paymentCode = await codeFor("PAY", "payments", "payment_code");
+  const collectedBy = String(payload.collected_by || "محمد").trim();
+  const notes = String(payload.notes || "").trim() || null;
   const row = {
     payment_code: paymentCode,
     student_id: student.id,
@@ -221,11 +223,22 @@ export async function createPayment(payload: Record<string, unknown>) {
     total_paid_after_payment: calc.paidAmount,
     remaining_after_payment: calc.remainingAmount,
     payment_method: String(payload.payment_method || "cash"),
+    collected_by: collectedBy,
     payment_date: String(payload.payment_date || todayIso()),
-    notes: String(payload.notes || "").trim() || null,
+    notes,
   };
-  const { data: payment, error } = await supabase.from("payments").insert(row).select("*").single();
-  if (error) throw error;
+  let { data: payment, error } = await supabase.from("payments").insert(row).select("*").single();
+  if (error && String(error.message || "").includes("collected_by")) {
+    const fallbackRow = {
+      ...row,
+      notes: [notes, `Collected by: ${collectedBy}`].filter(Boolean).join(" | "),
+    };
+    delete (fallbackRow as Partial<typeof row>).collected_by;
+    const retry = await supabase.from("payments").insert(fallbackRow).select("*").single();
+    payment = retry.data;
+    error = retry.error;
+  }
+  if (error || !payment) throw error || new Error("Payment insert failed");
   await supabase.from("students").update({
     paid_amount: calc.paidAmount,
     remaining_amount: calc.remainingAmount,

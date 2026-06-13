@@ -98,6 +98,7 @@ create table if not exists public.payments (
   total_paid_after_payment numeric(12,2) not null default 0,
   remaining_after_payment numeric(12,2) not null default 0,
   payment_method text,
+  collected_by text,
   payment_date date not null default current_date,
   notes text,
   created_at timestamptz not null default now(),

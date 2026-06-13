@@ -50,6 +50,7 @@ export type Payment = {
   total_paid_after_payment: number;
   remaining_after_payment: number;
   payment_method: string | null;
+  collected_by?: string | null;
   payment_date: string;
   notes: string | null;
   created_at: string;
