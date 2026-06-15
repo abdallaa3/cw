@@ -32,12 +32,28 @@ const SECTIONS: NavSection[] = [
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  isOpen,
+  onClose,
+}: {
+  isOpen?: boolean;
+  onClose?: () => void;
+}) {
   const pathname = usePathname();
   const { user, toggleUser } = useCurrentUser();
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${isOpen ? " sidebar-open" : ""}`}>
+      {/* Mobile close button inside sidebar */}
+      <button
+        className="sidebar-close-btn"
+        onClick={onClose}
+        aria-label="إغلاق القائمة"
+        type="button"
+      >
+        ✕
+      </button>
+
       <div className="sidebar-logo">
         <div className="logo-icon">
           <Image src="/codewave-logo.png" alt="CW" width={40} height={40} />
@@ -53,9 +69,17 @@ export function Sidebar() {
           <div key={section.title}>
             <div className="nav-section">{section.title}</div>
             {section.items.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`) || (item.href === "/invoice" && pathname.startsWith("/invoice"));
+              const active =
+                pathname === item.href ||
+                pathname.startsWith(`${item.href}/`) ||
+                (item.href === "/invoice" && pathname.startsWith("/invoice"));
               return (
-                <Link key={item.href} href={item.href} className={`nav-item${active ? " active" : ""}`}>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`nav-item${active ? " active" : ""}`}
+                  onClick={onClose}
+                >
                   <span className="icon">{item.icon}</span> {item.label}
                 </Link>
               );

@@ -981,6 +981,11 @@ select.field {
   color: var(--text2);
   margin-bottom: 8px;
 }
+.login-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 .login-input {
   width: 100%;
   background: var(--bg);
@@ -995,6 +1000,35 @@ select.field {
 .login-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.18);
+}
+/* Password show/hide toggle button */
+.login-show-btn {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s;
+  cursor: pointer;
+  font-size: 0.78rem;
+  user-select: none;
+}
+.login-show-btn:hover {
+  color: var(--accent);
+}
+.login-show-label {
+  font-size: 0.75rem;
+}
+/* Give password input left padding so text doesn't overlap the button */
+.login-password-wrap .login-input {
+  padding-left: 72px;
 }
 .login-error {
   margin-top: 14px;
@@ -1058,16 +1092,332 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
-@media (max-width: 640px) {
-  html { font-size: 14px; }
-  .login-card { padding: 30px 22px 26px; }
-  .stats-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
-  .form-row { grid-template-columns: 1fr; }
-  .modal { padding: 22px 18px; }
-  .content { padding: 14px; }
-  .toolbar { gap: 8px; }
-  .toolbar .field { flex: 1 1 auto; }
+/* ════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — Mobile-first adjustments
+   Breakpoints:
+     768px  tablet / mobile
+     480px  small phones (360–430px)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Mobile sidebar backdrop ────────────────────────────────────────────── */
+.sidebar-backdrop {
+  display: none;
 }
-@media (max-width: 420px) {
-  .stats-grid { grid-template-columns: 1fr; }
+
+/* ── Hamburger & sidebar close — hidden on desktop ──────────────────────── */
+.menu-toggle,
+.sidebar-close-btn {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* ── Sidebar: off-canvas slide-in from right ─────────────────────────── */
+  .sidebar {
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    z-index: 300;
+    width: min(280px, 85vw);
+  }
+  .sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  /* Close button inside sidebar — visible on mobile */
+  .sidebar-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text2);
+    font-size: 1rem;
+    z-index: 1;
+  }
+  .sidebar-close-btn:hover {
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+
+  /* Push logo text right of close button */
+  .sidebar-logo {
+    padding-right: 14px;
+    padding-left: 52px;
+  }
+
+  /* Backdrop overlay */
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 299;
+  }
+
+  /* ── Main: full width (no sidebar offset) ────────────────────────────── */
+  .main {
+    margin-right: 0;
+    width: 100%;
+  }
+
+  /* ── Header ─────────────────────────────────────────────────────────── */
+  .header {
+    padding: 10px 14px;
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .menu-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+  .menu-toggle:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .header-title {
+    font-size: 0.95rem;
+    flex: 1;
+  }
+  .header-date {
+    display: none;
+  }
+  .btn-refresh {
+    padding: 7px 10px;
+    font-size: 0.78rem;
+  }
+
+  /* ── Content area ─────────────────────────────────────────────────────── */
+  .content {
+    padding: 12px;
+  }
+
+  /* ── Stat cards ───────────────────────────────────────────────────────── */
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .stat-card {
+    padding: 14px 12px;
+  }
+  .stat-card .card-value {
+    font-size: 1.35rem;
+  }
+
+  /* ── Receivers grid ───────────────────────────────────────────────────── */
+  .receivers-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  /* ── Tables: horizontal scroll container (keeps desktop look) ─────────── */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 16px;
+  }
+  /* Minimum column width so table stays readable when scrolling */
+  table {
+    min-width: 480px;
+  }
+
+  /* ── Mobile card layout for main data tables ─────────────────────────── */
+  /* Applied via .cards-on-mobile class added to the table-wrap on key pages */
+  .cards-on-mobile table {
+    display: none;
+  }
+  .cards-on-mobile .mobile-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+  }
+  .mobile-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .mobile-card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.83rem;
+  }
+  .mobile-card-row .lbl {
+    color: var(--text2);
+    font-size: 0.75rem;
+    flex-shrink: 0;
+  }
+  .mobile-card-row .val {
+    text-align: left;
+    word-break: break-word;
+    font-weight: 500;
+  }
+  .mobile-card-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .mobile-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .mobile-card-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 64px;
+    padding: 7px 10px;
+    font-size: 0.78rem;
+  }
+
+  /* ── Toolbar ─────────────────────────────────────────────────────────── */
+  .toolbar {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .toolbar .field {
+    flex: 1 1 140px;
+    min-width: 0;
+    min-height: 38px;
+  }
+  .toolbar .spacer {
+    display: none;
+  }
+  .toolbar .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .toolbar .badge {
+    order: -1;
+    width: 100%;
+    text-align: center;
+    padding: 5px;
+    font-size: 0.8rem;
+  }
+
+  /* ── Section header ───────────────────────────────────────────────────── */
+  .section-header {
+    margin-bottom: 10px;
+  }
+
+  /* ── Modal ────────────────────────────────────────────────────────────── */
+  .modal-overlay {
+    padding: 10px 8px;
+    align-items: flex-end;
+  }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: 16px 16px 10px 10px;
+    padding: 20px 16px 24px;
+    margin: 0;
+  }
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+  .form-group {
+    margin-bottom: 12px;
+  }
+  .form-control {
+    font-size: 1rem;
+    padding: 11px 12px;
+    -webkit-text-size-adjust: 100%;
+  }
+  .modal-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .modal-actions .btn {
+    width: 100%;
+    justify-content: center;
+    padding: 12px;
+  }
+
+  /* ── Panel ────────────────────────────────────────────────────────────── */
+  .panel {
+    padding: 14px;
+  }
+
+  /* ── Login ────────────────────────────────────────────────────────────── */
+  .login-card {
+    padding: 28px 18px 24px;
+    margin: 12px;
+  }
+
+  /* ── Invoice ────────────────────────────────────────────────────────────*/
+  .invoice-wrap {
+    padding: 16px;
+    font-size: 0.88rem;
+  }
+  .invoice-header {
+    flex-direction: column;
+    gap: 14px;
+    align-items: flex-start;
+  }
+
+  /* ── Reports / summary cards ─────────────────────────────────────────── */
+  .report-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+/* ── Extra-small phones (360px) ─────────────────────────────────────────── */
+@media (max-width: 480px) {
+  html {
+    font-size: 14px;
+  }
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .content {
+    padding: 10px;
+  }
+  .modal {
+    padding: 18px 14px 20px;
+  }
+  .header {
+    padding: 9px 10px;
+  }
+  .header-title {
+    font-size: 0.88rem;
+  }
+  .btn-sm {
+    padding: 6px 9px;
+    font-size: 0.76rem;
+  }
+  .mobile-card {
+    padding: 12px;
+  }
+  .toolbar .field {
+    flex: 1 1 100%;
+  }
 }
