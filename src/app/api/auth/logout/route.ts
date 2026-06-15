@@ -4,7 +4,7 @@ import { addAudit } from "@/lib/data";
 
 export async function POST() {
   await requireAdmin();
-  await addAudit("Logout", "Auth", "Admin", "Admin logged out").catch(() => undefined);
+  await addAudit("system", "delete", "auth", null, "تسجيل خروج المسؤول").catch(() => undefined);
   await clearSession();
   return NextResponse.json({ ok: true });
 }

@@ -1,5 +1,12 @@
-import { AdminApp } from "@/components/AdminApp";
+import { Shell } from "@/components/Shell";
+import { ImportView } from "@/components/views/ImportView";
+
+export const dynamic = "force-dynamic";
 
 export default function ImportPage() {
-  return <AdminApp page="import" />;
+  return (
+    <Shell title={<>استيراد Excel</>}>
+      <ImportView />
+    </Shell>
+  );
 }

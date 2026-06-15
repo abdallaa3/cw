@@ -1,236 +1,70 @@
-# Code Wave Academy
+# Wave Academy (Code Wave) — Next.js + Supabase
 
-Modern academy management system built with Next.js, TypeScript, Tailwind CSS, and Supabase PostgreSQL.
+نظام الإدارة المالية لأكاديمية Code Wave. هذه النسخة (Next.js + Supabase) تطابق التطبيق الأصلي
+(Flask + SQLite) في الواجهة العربية RTL، الثيم الداكن، المنطق، وبنية البيانات.
 
-## Tech Stack
+## التقنيات
+- Next.js (App Router) + React + TypeScript
+- Supabase PostgreSQL (Server Components + Server Actions، عبر service-role key)
+- تصميم GitHub-dark RTL مطابق للأصل (بدون مكتبات UI خارجية)
 
-- Next.js App Router
-- TypeScript
-- Tailwind CSS
-- Supabase PostgreSQL
-- Server-side admin API with signed cookie session
-- In-app JSON/CSV ZIP backups
-- Local SQL backups with `pg_dump`
+## الصفحات
+لوحة التحكم · الطلاب · الجروبات · الدفعات · الخزينة · التقارير · استيراد Excel · سجل العمليات · الفاتورة
 
-## Local Setup
+## نموذج البيانات (يطابق app/models.py الأصلي)
+- `groups` — group_number, region, type(online/offline), subscription_type(monthly/term), notes, created_at
+- `students` — name, phone, group_id, total_amount, installments, installment_amount, notes, created_at
+  - المدفوع/المتبقي محسوبان من جدول الدفعات (غير مخزّنين) تماماً مثل paid_amount()/remaining_amount()
+- `payments` — amount, method, received_by(محمد/عبدالله), payment_date, image_path, notes
+- `cash_entries` — owner, entry_type(in/out), amount, entry_date, linked_payment_id, linked_student_id
+- `audit_logs` — actor, action, entity, entity_id, description, details(jsonb), created_at
 
-1. Install dependencies:
+## المنطق المنقول من Flask
+- تسجيل دفعة ينشئ تلقائياً حركة خزينة (in) للمستلم، مرتبطة بالدفعة.
+- حذف دفعة يحذف حركة الخزينة المرتبطة (ON DELETE CASCADE).
+- لا يمكن حذف حركة خزينة مرتبطة بدفعة من صفحة الخزينة.
+- حذف طالب يحذف دفعاته (cascade). حذف جروب لا يحذف الطلاب (group_id → SET NULL).
+- كل عمليات الإضافة/التعديل/الحذف تُسجَّل في سجل العمليات.
+- التواريخ بتوقيت القاهرة (UTC+3).
 
+## الإعداد المحلي
+
+1. التثبيت:
 ```bash
 npm install
 ```
 
-2. Copy environment example:
-
+2. انسخ ملف البيئة واملأه:
 ```bash
-copy .env.example .env.local
+cp .env.example .env.local
 ```
-
-3. Fill `.env.local`:
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...        # سرّي — server only
 ADMIN_PASSWORD=code.wave
-SESSION_SECRET=replace-with-a-long-random-secret
-DATABASE_URL=postgresql://postgres:password@host:5432/postgres
+SESSION_SECRET=at-least-24-characters-long-random
 ```
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY` in browser code.
+3. شغّل المايجريشن على Supabase (SQL Editor):
+```
+supabase/migrations/0003_wave_academy_schema.sql
+```
+> هذا يستبدل المخطط الإنجليزي القديم بالمخطط المطابق للأصل، وينشئ bucket باسم
+> `payment-images` لرفع صور الإيصالات.
 
-4. Run the Supabase schema:
-
-Open Supabase SQL Editor and run:
-
+4. التشغيل:
 ```bash
-supabase/migrations/0001_initial_schema.sql
+npm run dev      # http://localhost:3000
+npm run build    # بناء الإنتاج
+npm run lint     # فحص ESLint
 ```
 
-5. Start development:
+## رفع صور الإيصالات
+يتم الرفع إلى Supabase Storage (bucket: `payment-images`) عبر service-role، ويُحفظ الرابط
+العام في `payments.image_path`.
 
-```bash
-npm run dev
-```
-
-Open:
-
-```bash
-http://localhost:3000
-```
-
-## Validated Migration Targets
-
-The old Google Apps Script system was validated after import with:
-
-- Students: 83
-- Groups: 18
-- Payments: 76
-- Total paid: 254900
-- Total remaining: 137600
-- Pending payments count: 40
-
-Migration should import these tables into Supabase:
-
-- `students`
-- `groups`
-- `payments`
-- `invoices` if available
-- `cashbook` if available
-- `audit_logs` if useful
-- `settings`
-
-Validation rules:
-
-- Every payment must link to a valid `students.id`.
-- Every student should link to `groups.id` where available.
-- `remaining_amount = course_price - paid_amount`.
-- `payment_status` must be:
-  - `Unpaid` when paid amount is 0
-  - `Partially Paid` when paid amount is greater than 0 and less than course price
-  - `Paid` when paid amount is greater than or equal to course price
-
-## In-App Full Backup
-
-Go to:
-
-```bash
-/backup
-```
-
-Click:
-
-```bash
-Download Full Backup
-```
-
-The app downloads:
-
-```bash
-Code-Wave-Academy-Full-Backup-YYYY-MM-DD.zip
-```
-
-ZIP structure:
-
-```bash
-json/students.json
-json/groups.json
-json/payments.json
-json/invoices.json
-json/cashbook.json
-json/audit_logs.json
-json/settings.json
-json/backups.json
-json/courses.json
-csv/students.csv
-csv/groups.csv
-csv/payments.csv
-csv/invoices.csv
-csv/cashbook.csv
-csv/audit_logs.csv
-csv/settings.csv
-csv/backups.csv
-csv/courses.csv
-```
-
-After download, the app creates a row in `backups` and an entry in `audit_logs`.
-
-## SQL Database Backup
-
-Install PostgreSQL tools so `pg_dump` is available in `PATH`.
-
-Run:
-
-```bash
-npm run backup
-```
-
-Output:
-
-```bash
-backups/Code-Wave-Academy-DB-Backup-YYYY-MM-DD.sql
-```
-
-The `backups/` folder is ignored by Git.
-
-## Weekly Backup on Windows
-
-Create a weekly scheduled task from PowerShell:
-
-```powershell
-$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -Command `"cd F:\cwpro; npm run backup`""
-$Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 9am
-Register-ScheduledTask -TaskName "Code Wave Academy Weekly Backup" -Action $Action -Trigger $Trigger -Description "Weekly Supabase SQL backup for Code Wave Academy"
-```
-
-Make sure `.env.local` contains `DATABASE_URL`, or set `DATABASE_URL` at the system/user environment level.
-
-## Restore from JSON/CSV Backup
-
-1. Extract the ZIP.
-2. Import tables in this order:
-   - `groups`
-   - `students`
-   - `payments`
-   - `invoices`
-   - `cashbook`
-   - `settings`
-   - `backups`
-   - `audit_logs`
-   - `courses`
-3. Use Supabase Table Editor, SQL scripts, or a temporary import script.
-4. Validate totals after restore.
-
-## Restore from SQL Dump
-
-Use `psql`:
-
-```bash
-psql "postgresql://postgres:password@host:5432/postgres" -f backups/Code-Wave-Academy-DB-Backup-YYYY-MM-DD.sql
-```
-
-Confirm tables and totals after restore.
-
-## Vercel Deployment
-
-1. Push this project to GitHub.
-2. Create a Vercel project from the repository.
-3. Add environment variables:
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY
-ADMIN_PASSWORD
-SESSION_SECRET
-DATABASE_URL
-```
-
-4. Deploy.
-5. Test login, dashboard, students, payments, invoices, backup download, and PDF download.
-
-## GitHub
-
-If GitHub CLI is available:
-
-```bash
-gh auth login
-gh repo create code-wave-academy --private --source=. --remote=origin --push
-```
-
-Do not commit `.env.local`, SQL dumps, or generated backups.
-
-## Core Checks Before Production
-
-- `npm run build`
-- Login works with `ADMIN_PASSWORD`
-- Dashboard loads from Supabase
-- Add/edit/archive student
-- Add/edit/archive group
-- Record payment and verify balance recalculation
-- Generate invoice
-- Download invoice PDF
-- WhatsApp links use parent phone first
-- Download Full Backup ZIP
-- `npm run backup`
-- Migration totals match validated old data
+## استيراد / تصدير Excel
+- الاستيراد: يدعم `.xlsx` و `.csv` (قارئ xlsx مبني على jszip بدون مكتبات خارجية)،
+  ويتعرف على أعمدة عربية/إنجليزية ويحلّل «محمد كاش» / «عبدالله تحويل» للمستلم والطريقة.
+- التصدير: من صفحة التقارير إلى `.xlsx` (الطلاب/الدفعات/الجروبات).

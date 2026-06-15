@@ -1,156 +1,109 @@
-export type Status = "Active" | "Paused" | "Completed" | "Cancelled" | "Archived";
-export type PaymentStatus = "Unpaid" | "Partially Paid" | "Paid";
-export type CashbookType = "Income" | "Expense";
+// Domain types — mirror the Flask models (app/models.py) of Wave Academy.
 
-export type Student = {
-  id: string;
-  student_code: string;
-  student_name: string;
-  phone: string | null;
-  parent_phone: string | null;
-  course: string | null;
-  group_id: string | null;
-  group_name: string | null;
-  course_price: number;
-  paid_amount: number;
-  remaining_amount: number;
-  payment_status: PaymentStatus;
-  student_status: Status;
-  notes: string | null;
-  registration_date: string | null;
-  created_at: string;
-  updated_at: string;
-};
+export const RECEIVERS = ["محمد", "عبدالله"] as const;
+export type Receiver = (typeof RECEIVERS)[number];
+
+export const PAYMENT_METHODS = ["cash", "bank_transfer", "vodafone_cash", "instapay"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const GROUP_TYPES = ["online", "offline"] as const;
+export type GroupType = (typeof GROUP_TYPES)[number];
+
+export const SUBSCRIPTION_TYPES = ["monthly", "term"] as const;
+export type SubscriptionType = (typeof SUBSCRIPTION_TYPES)[number];
+
+export const ENTRY_TYPES = ["in", "out"] as const;
+export type EntryType = (typeof ENTRY_TYPES)[number];
 
 export type Group = {
   id: string;
-  group_code: string;
-  group_name: string;
-  course: string | null;
-  instructor: string | null;
-  schedule: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  status: Status;
+  group_number: string;
+  region: string;
+  type: GroupType;
+  subscription_type: SubscriptionType;
   notes: string | null;
   created_at: string;
-  updated_at: string;
+  students_count?: number;
+};
+
+export type Student = {
+  id: string;
+  name: string;
+  phone: string | null;
+  group_id: string | null;
+  group_number: string | null;
+  region: string | null;
+  total_amount: number;
+  installments: number;
+  installment_amount: number;
+  notes: string | null;
+  created_at: string;
+  paid_amount: number;
+  remaining_amount: number;
+  payments?: Payment[];
 };
 
 export type Payment = {
   id: string;
-  payment_code: string;
   student_id: string;
-  student_code: string;
-  student_name: string;
-  group_id: string | null;
-  group_name: string | null;
-  course: string | null;
-  payment_amount: number;
-  total_paid_after_payment: number;
-  remaining_after_payment: number;
-  payment_method: string | null;
-  collected_by?: string | null;
-  payment_date: string;
-  notes: string | null;
-  created_at: string;
-};
-
-export type Invoice = {
-  id: string;
-  invoice_code: string;
-  student_id: string;
-  student_code: string;
-  student_name: string;
-  invoice_date: string;
-  course: string | null;
-  group_name: string | null;
-  course_price: number;
-  paid_amount: number;
-  remaining_amount: number;
-  payment_status: PaymentStatus;
-  notes: string | null;
-  created_at: string;
-};
-
-export type CashbookEntry = {
-  id: string;
-  cashbook_code: string;
-  date: string;
-  type: CashbookType;
-  category: string | null;
-  description: string | null;
+  student_name: string | null;
+  group_number?: string | null;
   amount: number;
-  related_student_id: string | null;
-  related_payment_id: string | null;
+  method: PaymentMethod;
+  received_by: Receiver;
+  payment_date: string;
+  image_path: string | null;
   notes: string | null;
+  created_at: string;
+};
+
+export type CashEntry = {
+  id: string;
+  owner: Receiver;
+  entry_type: EntryType;
+  amount: number;
+  notes: string | null;
+  entry_date: string;
+  linked_payment_id: string | null;
+  linked_student_id: string | null;
+  linked_student_name: string | null;
   created_at: string;
 };
 
 export type AuditLog = {
   id: string;
-  log_code: string;
-  timestamp: string;
+  actor: string;
   action: string;
-  entity_type: string | null;
+  entity: string;
   entity_id: string | null;
-  description: string | null;
-  user: string;
-  notes: string | null;
-};
-
-export type Setting = {
-  id: string;
-  key: string;
-  value: string | null;
-  updated_at: string;
-};
-
-export type BackupRecord = {
-  id: string;
-  backup_code: string;
-  file_name: string;
-  backup_type: string;
-  tables_included: string[] | null;
+  description: string;
+  details: string | null;
   created_at: string;
-  notes: string | null;
+};
+
+export type ReceiverSummary = { received_by: string; total: number; count: number };
+export type MethodSummary = { method: string; total: number; count: number };
+export type GroupSummary = {
+  group_id: string;
+  group_number: string;
+  region: string;
+  students_count: number;
+  total_expected: number;
+  total_paid: number;
+  total_remaining: number;
 };
 
 export type DashboardData = {
-  totalStudents: number;
-  activeStudents: number;
-  archivedStudents: number;
-  totalGroups: number;
-  activeGroups: number;
-  totalCollected: number;
-  totalRemaining: number;
-  pendingPaymentsCount: number;
-  todayPayments: number;
-  thisMonthRevenue: number;
-  recentPayments: Payment[];
-  recentInvoices: Invoice[];
-  recentAuditLogs: AuditLog[];
+  total_collected: number;
+  total_expected: number;
+  total_remaining: number;
+  total_students: number;
+  paid_students_count: number;
+  not_paid_students_count: number;
+  receivers_summary: ReceiverSummary[];
+  methods_summary: MethodSummary[];
+  groups_summary: GroupSummary[];
+  recent_payments: Payment[];
 };
 
-export type AppData = {
-  students: Student[];
-  groups: Group[];
-  payments: Payment[];
-  invoices: Invoice[];
-  cashbook: CashbookEntry[];
-  auditLogs: AuditLog[];
-  settings: Setting[];
-  backups: BackupRecord[];
-};
-
-export const backupTables = [
-  "students",
-  "groups",
-  "payments",
-  "invoices",
-  "cashbook",
-  "audit_logs",
-  "settings",
-  "backups",
-  "courses",
-] as const;
+export type CashBalances = Record<Receiver, number>;
