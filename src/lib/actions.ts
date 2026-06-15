@@ -454,6 +454,14 @@ export async function importBackupAction(sheets: BackupSheets): Promise<Result> 
           const phone = cellAt(row, ix.phone) || null;
           const study = normalizeStudyType(cellAt(row, ix.study));
           const groupNum = cellAt(row, ix.group);
+          let groupId: string | null = null;
+          if (groupNum) {
+            if (groupByNumber.has(groupNum)) groupId = groupByNumber.get(groupNum)!;
+            else {
+              const { data: ng } = await supabase.from("groups").insert({ group_number: groupNum, region: "غير محدد", type: "offline", subscription_type: "monthly", day1: "السبت" }).select("id").single();
+              if (ng) { groupId = ng.id; groupByNumber.set(groupNum, ng.id); }
+            }
+          }
           const obj: Record<string, unknown> = {
             name,
             phone,
@@ -461,7 +469,7 @@ export async function importBackupAction(sheets: BackupSheets): Promise<Result> 
             study_type: study,
             online_type: study === "online" ? normalizeOnlineType(cellAt(row, ix.online)) : null,
             branch: study === "offline" ? (cellAt(row, ix.branch) || null) : null,
-            group_id: groupNum && groupByNumber.has(groupNum) ? groupByNumber.get(groupNum) : null,
+            group_id: groupId,
             total_amount: Number(cellAt(row, ix.total) || 0),
             installments: Number(cellAt(row, ix.inst) || 1) || 1,
             installment_amount: Number(cellAt(row, ix.instAmt) || 0),
