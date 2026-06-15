@@ -35,6 +35,15 @@ export type Weekday = (typeof WEEKDAYS)[number];
 export const ENTRY_TYPES = ["in", "out"] as const;
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
+// Financial transaction types on the payments table.
+// amount is ALWAYS stored positive; the sign is implied by type + direction.
+export const TRANSACTION_TYPES = ["payment", "refund", "adjustment", "cancelled"] as const;
+export type TransactionType = (typeof TRANSACTION_TYPES)[number];
+
+// Direction for adjustment transactions only.
+export const ADJUSTMENT_DIRECTIONS = ["increase", "decrease"] as const;
+export type AdjustmentDirection = (typeof ADJUSTMENT_DIRECTIONS)[number];
+
 export type Group = {
   id: string;
   group_number: string;
@@ -81,6 +90,8 @@ export type Payment = {
   student_name: string | null;
   group_number?: string | null;
   amount: number;
+  transaction_type: TransactionType;
+  direction: AdjustmentDirection | null;
   method: PaymentMethod;
   received_by: Receiver;
   payment_date: string;

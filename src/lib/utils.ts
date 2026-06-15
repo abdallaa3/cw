@@ -1,4 +1,4 @@
-import { WEEKDAYS, type EntryType, type PaymentMethod, type Receiver } from "./types";
+import { WEEKDAYS, type AdjustmentDirection, type EntryType, type PaymentMethod, type Receiver, type TransactionType } from "./types";
 
 export function money(value: unknown): number {
   const n = typeof value === "number" ? value : Number(String(value ?? "").replace(/[^\d.-]/g, ""));
@@ -43,6 +43,40 @@ export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
   in: "دخل",
   out: "مصروف",
 };
+
+export const TX_TYPE_LABELS: Record<TransactionType, string> = {
+  payment: "دفعة",
+  refund: "استرداد",
+  adjustment: "تعديل مالي",
+  cancelled: "ملغي",
+};
+
+// Returns the signed contribution of a payment row to the student's paid_amount.
+// Amounts are always stored positive; sign is determined by type + direction.
+export function signedPaymentAmount(
+  amount: number,
+  txType: TransactionType | string | null | undefined,
+  direction: AdjustmentDirection | string | null | undefined,
+): number {
+  const n = Number(amount ?? 0);
+  const t = txType ?? "payment";
+  if (t === "cancelled") return 0;
+  if (t === "refund") return -n;
+  if (t === "adjustment" && direction === "decrease") return -n;
+  return n; // 'payment' or 'adjustment increase'
+}
+
+// The cashbook entry_type corresponding to a payment transaction.
+export function paymentCashType(
+  txType: TransactionType | string | null | undefined,
+  direction: AdjustmentDirection | string | null | undefined,
+): "in" | "out" {
+  const t = txType ?? "payment";
+  if (t === "payment") return "in";
+  if (t === "refund") return "out";
+  if (t === "adjustment") return direction === "decrease" ? "out" : "in";
+  return "in";
+}
 
 export const STUDY_TYPE_LABELS: Record<string, string> = {
   online: "أونلاين",

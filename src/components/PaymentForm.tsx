@@ -7,7 +7,7 @@ import { toast } from "@/components/toast";
 import { savePaymentAction, uploadPaymentImageAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
 import { PAYMENT_METHODS, RECEIVERS, type Payment } from "@/lib/types";
-import { METHOD_LABELS, todayIso } from "@/lib/utils";
+import { METHOD_LABELS, todayIso, TX_TYPE_LABELS } from "@/lib/utils";
 
 export type PaymentStudent = { id: string; name: string };
 
@@ -78,9 +78,21 @@ export function PaymentForm({
 
   const preselectedName = students.find((s) => s.id === form.student_id)?.name;
 
+  const editingTxType = editing?.transaction_type ?? "payment";
+  const editingLabel = TX_TYPE_LABELS[editingTxType] ?? editingTxType;
+
   return (
-    <Modal title={editing ? "تعديل دفعة" : "تسجيل دفعة"} onClose={onClose}>
+    <Modal title={editing ? `تعديل ${editingLabel}` : "تسجيل دفعة"} onClose={onClose}>
       {error && <div className="form-error">{error}</div>}
+
+      {editing && editingTxType !== "payment" && (
+        <div className="panel" style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(247,129,102,.08)", border: "1px solid rgba(247,129,102,.3)" }}>
+          <span className="muted" style={{ fontSize: ".85rem" }}>
+            نوع المعاملة: <strong style={{ color: editingTxType === "cancelled" ? "var(--text2)" : "var(--warn)" }}>{editingLabel}</strong>
+            {editing.direction ? ` (${editing.direction === "increase" ? "زيادة ▲" : "خصم ▼"})` : ""}
+          </span>
+        </div>
+      )}
 
       <div className="form-group">
         <label className="form-label">الطالب</label>

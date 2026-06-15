@@ -1,8 +1,9 @@
 // Server-side data layer — mirrors the Flask routes/business logic.
 // All access goes through the service-role client (RLS bypassed).
 import { getSupabaseAdmin } from "./supabase";
-import { todayIso, todayWeekday } from "./utils";
+import { paymentCashType, signedPaymentAmount, todayIso, todayWeekday } from "./utils";
 import type {
+  AdjustmentDirection,
   AuditLog,
   CashBalances,
   CashEntry,
@@ -14,6 +15,7 @@ import type {
   Receiver,
   Student,
   TodayGroup,
+  TransactionType,
 } from "./types";
 
 const RECEIVERS: Receiver[] = ["محمد", "عبدالله"];
@@ -160,12 +162,13 @@ export async function listStudents(filters: {
 
   const [{ data: groups }, { data: payments }] = await Promise.all([
     supabase.from("groups").select("*"),
-    supabase.from("payments").select("student_id, amount"),
+    supabase.from("payments").select("student_id, amount, transaction_type, direction"),
   ]);
   const groupsById = new Map<string, Group>((groups ?? []).map((g) => [g.id, g as Group]));
   const paidByStudent = new Map<string, number>();
   for (const p of payments ?? []) {
-    paidByStudent.set(p.student_id, (paidByStudent.get(p.student_id) ?? 0) + Number(p.amount));
+    const signed = signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction);
+    paidByStudent.set(p.student_id, (paidByStudent.get(p.student_id) ?? 0) + signed);
   }
 
   let result = (students ?? []).map((s) => attachDerived(s, groupsById, paidByStudent));
@@ -184,7 +187,10 @@ export async function getStudent(id: string): Promise<Student | null> {
       : Promise.resolve({ data: null }),
     supabase.from("payments").select("*").eq("student_id", id).order("payment_date", { ascending: false }),
   ]);
-  const paid = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
+  const paid = (payments ?? []).reduce(
+    (sum, p) => sum + signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction),
+    0,
+  );
   return {
     ...(student as object),
     group_number: (group as Group | null)?.group_number ?? null,
@@ -315,11 +321,16 @@ export async function listPayments(filters: {
     const s = studentsById.get(p.student_id);
     return {
       ...p,
+      transaction_type: (p.transaction_type ?? "payment") as TransactionType,
+      direction: (p.direction ?? null) as AdjustmentDirection | null,
       student_name: s?.name ?? null,
       group_number: s?.group_id ? groupsById.get(s.group_id)?.group_number ?? null : null,
     } as Payment;
   });
-  const total = data.reduce((sum, p) => sum + Number(p.amount), 0);
+  const total = data.reduce(
+    (sum, p) => sum + signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction),
+    0,
+  );
   return { data, total };
 }
 
@@ -329,9 +340,27 @@ export async function createPayment(payload: Record<string, unknown>) {
   const amount = Number(payload.amount ?? 0);
   const method = String(payload.method ?? "cash");
   const receivedBy = String(payload.received_by ?? "") as Receiver;
+  const txType = (["payment", "refund", "adjustment", "cancelled"].includes(String(payload.transaction_type))
+    ? String(payload.transaction_type)
+    : "payment") as TransactionType;
+  const direction = (["increase", "decrease"].includes(String(payload.direction))
+    ? String(payload.direction)
+    : null) as AdjustmentDirection | null;
+  const notes = String(payload.notes ?? "").trim() || null;
+
   if (!studentId || amount <= 0 || !method || !receivedBy) {
     throw new Error("الحقول المطلوبة ناقصة: الطالب، المبلغ، الطريقة، المستلم");
   }
+  if ((txType === "refund" || txType === "adjustment") && !notes) {
+    throw new Error("السبب / الملاحظة مطلوبة للاسترداد والتعديل المالي");
+  }
+  if (txType === "adjustment" && !direction) {
+    throw new Error("اتجاه التعديل مطلوب (زيادة أو خصم)");
+  }
+  if (!RECEIVERS.includes(receivedBy)) {
+    throw new Error("المستلم يجب أن يكون محمد أو عبدالله");
+  }
+
   const { data: student } = await supabase.from("students").select("id, name").eq("id", studentId).single();
   if (!student) throw new Error("الطالب غير موجود");
 
@@ -342,34 +371,48 @@ export async function createPayment(payload: Record<string, unknown>) {
     received_by: receivedBy,
     payment_date: String(payload.payment_date || todayIso()),
     image_path: String(payload.image_path ?? "") || null,
-    notes: String(payload.notes ?? "").trim() || null,
+    notes,
+    transaction_type: txType,
+    direction: txType === "adjustment" ? direction : null,
   };
   const { data: payment, error } = await supabase.from("payments").insert(row).select("*").single();
   if (error) throw error;
 
-  if (RECEIVERS.includes(receivedBy)) {
-    let cashNote = `دفعة من ${student.name}`;
-    if (row.notes) cashNote += ` — ${row.notes}`;
+  // Cashbook entry — only for non-cancelled transactions
+  if (txType !== "cancelled") {
+    const cashType = paymentCashType(txType, direction);
+    const txLabel =
+      txType === "payment"
+        ? `دفعة من ${student.name}`
+        : txType === "refund"
+          ? `استرداد — ${student.name}`
+          : `تعديل مالي ${direction === "decrease" ? "خصم" : "زيادة"} — ${student.name}`;
     await supabase.from("cash_entries").insert({
       owner: receivedBy,
-      entry_type: "in",
+      entry_type: cashType,
       amount,
-      notes: cashNote,
+      notes: notes ? `${txLabel} — ${notes}` : txLabel,
       entry_date: row.payment_date,
       linked_payment_id: payment.id,
       linked_student_id: studentId,
     });
   }
 
+  const TX_LABELS: Record<TransactionType, string> = {
+    payment: "دفعة جديدة",
+    refund: "استرداد",
+    adjustment: "تعديل مالي",
+    cancelled: "دفعة (ملغي)",
+  };
   await addAudit(
     receivedBy,
     "create",
     "payment",
     payment.id,
-    `تسجيل دفعة جديدة — ${student.name} — ${amount} ج — ${method}`,
-    { student_id: studentId, amount, method, date: row.payment_date },
+    `${TX_LABELS[txType]} — ${student.name} — ${amount} ج — ${method}`,
+    { student_id: studentId, amount, method, transaction_type: txType, direction, date: row.payment_date },
   );
-  return payment as Payment;
+  return { ...payment, transaction_type: txType, direction } as Payment;
 }
 
 export async function updatePayment(id: string, payload: Record<string, unknown>) {
@@ -384,22 +427,52 @@ export async function updatePayment(id: string, payload: Record<string, unknown>
   const { data: payment, error } = await supabase.from("payments").update(patch).eq("id", id).select("*").single();
   if (error) throw error;
 
-  // Keep the linked cashbook entry in sync (never create a duplicate).
+  const txType = (payment.transaction_type ?? "payment") as TransactionType;
+  const direction = (payment.direction ?? null) as AdjustmentDirection | null;
+  const isCancelled = txType === "cancelled";
+
+  // Keep linked cashbook entry in sync — handles: receiver transfers, amount changes,
+  // date changes, type changes (including cancel → active and active → cancel).
   const { data: linked } = await supabase
     .from("cash_entries")
     .select("id")
     .eq("linked_payment_id", id)
     .maybeSingle();
-  if (linked) {
+
+  if (isCancelled && linked) {
+    // Payment cancelled → remove the cashbook entry so it stops affecting balances
+    await supabase.from("cash_entries").delete().eq("id", linked.id);
+  } else if (!isCancelled && linked) {
+    // Active payment — update cashbook to reflect any changes (amount, owner, date, type)
+    const cashType = paymentCashType(txType, direction);
     await supabase
       .from("cash_entries")
-      .update({ amount: Number(payment.amount), owner: payment.received_by, entry_date: payment.payment_date })
+      .update({
+        amount: Number(payment.amount),
+        owner: payment.received_by,
+        entry_date: payment.payment_date,
+        entry_type: cashType,
+      })
       .eq("id", linked.id);
+  } else if (!isCancelled && !linked) {
+    // Was previously cancelled or cashbook entry missing — create it now
+    const cashType = paymentCashType(txType, direction);
+    const { data: student } = await supabase.from("students").select("name").eq("id", payment.student_id).single();
+    await supabase.from("cash_entries").insert({
+      owner: payment.received_by,
+      entry_type: cashType,
+      amount: Number(payment.amount),
+      notes: `تعديل دفعة — ${student?.name ?? ""}`,
+      entry_date: payment.payment_date,
+      linked_payment_id: id,
+      linked_student_id: payment.student_id,
+    });
   }
 
   const { data: student } = await supabase.from("students").select("name").eq("id", payment.student_id).single();
-  await addAudit(payment.received_by, "update", "payment", id, `تعديل دفعة — ${student?.name ?? ""} — ${payment.amount} ج`, patch);
-  return payment as Payment;
+  await addAudit(payment.received_by, "update", "payment", id,
+    `تعديل دفعة — ${student?.name ?? ""} — ${payment.amount} ج`, patch);
+  return { ...payment, transaction_type: txType, direction } as Payment;
 }
 
 export async function deletePayment(id: string) {
@@ -550,10 +623,14 @@ export async function getDashboard(): Promise<DashboardData> {
 
   const paidByStudent = new Map<string, number>();
   for (const p of payments ?? []) {
-    paidByStudent.set(p.student_id, (paidByStudent.get(p.student_id) ?? 0) + Number(p.amount));
+    const signed = signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction);
+    paidByStudent.set(p.student_id, (paidByStudent.get(p.student_id) ?? 0) + signed);
   }
 
-  const total_collected = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
+  const total_collected = (payments ?? []).reduce(
+    (sum, p) => sum + signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction),
+    0,
+  );
   const total_expected = (students ?? []).reduce((sum, s) => sum + Number(s.total_amount ?? 0), 0);
   const total_students = (students ?? []).length;
 
@@ -568,14 +645,17 @@ export async function getDashboard(): Promise<DashboardData> {
   const recvMap = new Map<string, { total: number; count: number }>();
   const methodMap = new Map<string, { total: number; count: number }>();
   for (const p of payments ?? []) {
-    const r = recvMap.get(p.received_by) ?? { total: 0, count: 0 };
-    r.total += Number(p.amount);
-    r.count += 1;
-    recvMap.set(p.received_by, r);
-    const m = methodMap.get(p.method) ?? { total: 0, count: 0 };
-    m.total += Number(p.amount);
-    m.count += 1;
-    methodMap.set(p.method, m);
+    const signed = signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction);
+    if (p.transaction_type !== "cancelled") {
+      const r = recvMap.get(p.received_by) ?? { total: 0, count: 0 };
+      r.total += signed;
+      r.count += 1;
+      recvMap.set(p.received_by, r);
+      const m = methodMap.get(p.method) ?? { total: 0, count: 0 };
+      m.total += signed;
+      m.count += 1;
+      methodMap.set(p.method, m);
+    }
   }
 
   const studentsByGroup = new Map<string, Array<Record<string, unknown>>>();

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Modal";
 import { EmptyState } from "@/components/EmptyState";
 import { PaymentForm } from "@/components/PaymentForm";
+import { AdjustmentForm } from "@/components/AdjustmentForm";
 import { toast } from "@/components/toast";
 import { saveStudentAction, deleteStudentAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
@@ -68,6 +69,7 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [payFor, setPayFor] = useState<Student | null>(null);
+  const [adjFor, setAdjFor] = useState<{ id: string; name: string } | null>(null);
 
   const studentOptions = useMemo(() => students.map((s) => ({ id: s.id, name: s.name })), [students]);
 
@@ -248,6 +250,7 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
                   <td>{statusBadge(s)}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     <button className="btn btn-success btn-sm" onClick={() => setPayFor(s)}>دفع</button>{" "}
+                    <button className="btn btn-outline btn-sm" onClick={() => setAdjFor({ id: s.id, name: s.name })}>خصم / استرداد</button>{" "}
                     <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>{" "}
                     <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}>تعديل</button>{" "}
                     <button className="btn btn-danger btn-sm" onClick={() => remove(s)}>حذف</button>
@@ -364,6 +367,10 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
 
       {payFor && (
         <PaymentForm students={studentOptions} preselectedStudentId={payFor.id} onClose={() => setPayFor(null)} />
+      )}
+
+      {adjFor && (
+        <AdjustmentForm student={adjFor} onClose={() => setAdjFor(null)} />
       )}
     </>
   );
