@@ -322,3 +322,278 @@ export async function uploadPaymentImageAction(formData: FormData): Promise<Resu
     return fail(e);
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Full Excel backup: export + safe round-trip import (upsert, never deletes).
+// Backup sheets use stable machine headers so a re-imported file matches rows
+// by id and updates them instead of creating duplicates.
+// ════════════════════════════════════════════════════════════════════════════
+
+const BACKUP_STUDENT_HEADERS = [
+  "id", "name", "phone", "age", "study_type", "online_type", "branch",
+  "group_number", "total_amount", "installments", "installment_amount", "next_due_date", "notes",
+];
+const BACKUP_PAYMENT_HEADERS = ["id", "student_id", "amount", "method", "received_by", "payment_date", "notes"];
+const BACKUP_CASH_HEADERS = ["id", "owner", "entry_type", "amount", "entry_date", "notes", "linked_payment_id", "linked_student_id"];
+
+// Build the three backup sheets (header row + data rows) from the live database.
+export async function getBackupAction(): Promise<Result> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const [{ data: students }, { data: payments }, { data: groups }, { data: cash }] = await Promise.all([
+      supabase.from("students").select("*").order("created_at", { ascending: true }),
+      supabase.from("payments").select("*").order("payment_date", { ascending: true }),
+      supabase.from("groups").select("id, group_number"),
+      supabase.from("cash_entries").select("*").order("entry_date", { ascending: true }),
+    ]);
+    const groupNumberById = new Map((groups ?? []).map((g) => [g.id, g.group_number]));
+
+    const studentRows: (string | number)[][] = [
+      BACKUP_STUDENT_HEADERS,
+      ...(students ?? []).map((s) => [
+        s.id, s.name, s.phone ?? "", s.age ?? "", s.study_type ?? "offline", s.online_type ?? "", s.branch ?? "",
+        s.group_id ? groupNumberById.get(s.group_id) ?? "" : "", Number(s.total_amount ?? 0),
+        Number(s.installments ?? 1), Number(s.installment_amount ?? 0), s.next_due_date ?? "", s.notes ?? "",
+      ]),
+    ];
+    const paymentRows: (string | number)[][] = [
+      BACKUP_PAYMENT_HEADERS,
+      ...(payments ?? []).map((p) => [
+        p.id, p.student_id, Number(p.amount), p.method, p.received_by, p.payment_date, p.notes ?? "",
+      ]),
+    ];
+    const cashRows: (string | number)[][] = [
+      BACKUP_CASH_HEADERS,
+      ...(cash ?? []).map((c) => [
+        c.id, c.owner, c.entry_type, Number(c.amount), c.entry_date, c.notes ?? "",
+        c.linked_payment_id ?? "", c.linked_student_id ?? "",
+      ]),
+    ];
+    return { ok: true, data: { students: studentRows, payments: paymentRows, cashbook: cashRows } };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+function cellAt(row: string[], idx: number): string {
+  return idx >= 0 && idx < row.length && row[idx] != null ? String(row[idx]).trim() : "";
+}
+
+function normalizeStudyType(value: string): "online" | "offline" {
+  const s = value.toLowerCase();
+  return value.includes("أونلاين") || value.includes("اونلاين") || s.includes("online") ? "online" : "offline";
+}
+
+function normalizeOnlineType(value: string): "private" | "group" | null {
+  if (!value) return null;
+  if (value.includes("خصوص") || value.toLowerCase().includes("private")) return "private";
+  if (value.includes("جروب") || value.toLowerCase().includes("group")) return "group";
+  return null;
+}
+
+function normalizeMethod(value: string): string {
+  const s = value.toLowerCase();
+  if (value.includes("تحويل") || s.includes("bank")) return "bank_transfer";
+  if (value.includes("محفظ") || value.includes("فودافون") || s.includes("vodafone") || s.includes("wallet")) return "vodafone_cash";
+  if (value.includes("انستا") || value.includes("إنستا") || s.includes("instapay")) return "instapay";
+  return "cash";
+}
+
+type BackupSheets = { students?: string[][]; payments?: string[][]; cashbook?: string[][] };
+type ImportCounts = {
+  students_new: number;
+  students_updated: number;
+  payments_new: number;
+  cashbook_new: number;
+  errors: Array<{ sheet: string; row: number; error: string }>;
+};
+
+// Safe upsert import. Matches existing rows by id (then name+phone for students),
+// updates them in place, inserts new ones, and NEVER deletes anything.
+export async function importBackupAction(sheets: BackupSheets): Promise<Result> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const counts: ImportCounts = { students_new: 0, students_updated: 0, payments_new: 0, cashbook_new: 0, errors: [] };
+
+    const [{ data: groups }, { data: dbStudents }, { data: dbPayments }, { data: dbCash }] = await Promise.all([
+      supabase.from("groups").select("id, group_number"),
+      supabase.from("students").select("id, name, phone"),
+      supabase.from("payments").select("id"),
+      supabase.from("cash_entries").select("id"),
+    ]);
+    const groupByNumber = new Map((groups ?? []).map((g) => [String(g.group_number), g.id]));
+    const existingStudentIds = new Set((dbStudents ?? []).map((s) => s.id));
+    const studentByNamePhone = new Map(
+      (dbStudents ?? []).map((s) => [`${(s.name ?? "").trim()}|${(s.phone ?? "").trim()}`, s.id]),
+    );
+    const existingPaymentIds = new Set((dbPayments ?? []).map((p) => p.id));
+    const existingCashIds = new Set((dbCash ?? []).map((c) => c.id));
+
+    // Maps the id used in the imported file → the real database id.
+    const sheetStudentIdToDbId = new Map<string, string>();
+
+    // ── Students ──────────────────────────────────────────────────────────────
+    const sRows = sheets.students ?? [];
+    if (sRows.length > 1) {
+      const h = sRows[0].map((x) => String(x ?? ""));
+      const col = (name: string) => findCol(h, [name]);
+      const ix = {
+        id: col("id"), name: col("name"), phone: col("phone"), age: col("age"),
+        study: col("study_type"), online: col("online_type"), branch: col("branch"),
+        group: findCol(h, ["group_number", "group"]), total: col("total_amount"),
+        inst: col("installments"), instAmt: col("installment_amount"), due: col("next_due_date"), notes: col("notes"),
+      };
+      for (let i = 1; i < sRows.length; i++) {
+        const row = sRows[i].map((c) => String(c ?? ""));
+        try {
+          const name = cellAt(row, ix.name);
+          if (!name) continue;
+          const sheetId = cellAt(row, ix.id);
+          const phone = cellAt(row, ix.phone) || null;
+          const study = normalizeStudyType(cellAt(row, ix.study));
+          const groupNum = cellAt(row, ix.group);
+          const obj: Record<string, unknown> = {
+            name,
+            phone,
+            age: cellAt(row, ix.age) ? Number(cellAt(row, ix.age)) : null,
+            study_type: study,
+            online_type: study === "online" ? normalizeOnlineType(cellAt(row, ix.online)) : null,
+            branch: study === "offline" ? (cellAt(row, ix.branch) || null) : null,
+            group_id: groupNum && groupByNumber.has(groupNum) ? groupByNumber.get(groupNum) : null,
+            total_amount: Number(cellAt(row, ix.total) || 0),
+            installments: Number(cellAt(row, ix.inst) || 1) || 1,
+            installment_amount: Number(cellAt(row, ix.instAmt) || 0),
+            next_due_date: cellAt(row, ix.due) || null,
+            notes: cellAt(row, ix.notes) || null,
+          };
+          let dbId: string | null = null;
+          if (sheetId && existingStudentIds.has(sheetId)) dbId = sheetId;
+          else {
+            const key = `${name}|${phone ?? ""}`;
+            if (studentByNamePhone.has(key)) dbId = studentByNamePhone.get(key)!;
+          }
+          if (dbId) {
+            const { error } = await supabase.from("students").update(obj).eq("id", dbId);
+            if (error) throw error;
+            counts.students_updated += 1;
+          } else {
+            const { data: ins, error } = await supabase.from("students").insert(obj).select("id").single();
+            if (error) throw error;
+            dbId = ins.id;
+            existingStudentIds.add(dbId);
+            studentByNamePhone.set(`${name}|${phone ?? ""}`, dbId);
+            counts.students_new += 1;
+          }
+          if (sheetId && dbId) sheetStudentIdToDbId.set(sheetId, dbId);
+        } catch (e) {
+          counts.errors.push({ sheet: "Students", row: i + 1, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+
+    // ── Payments (insert new only; dedupe by id) ───────────────────────────────
+    const pRows = sheets.payments ?? [];
+    if (pRows.length > 1) {
+      const h = pRows[0].map((x) => String(x ?? ""));
+      const col = (name: string) => findCol(h, [name]);
+      const ix = {
+        id: col("id"), student: findCol(h, ["student_id", "student"]), amount: col("amount"),
+        method: col("method"), recv: findCol(h, ["received_by", "receiver"]), date: col("payment_date"), notes: col("notes"),
+      };
+      for (let i = 1; i < pRows.length; i++) {
+        const row = pRows[i].map((c) => String(c ?? ""));
+        try {
+          const sheetId = cellAt(row, ix.id);
+          if (sheetId && existingPaymentIds.has(sheetId)) continue; // already imported — no duplicate
+          const rawStudent = cellAt(row, ix.student);
+          const studentId = sheetStudentIdToDbId.get(rawStudent) ?? (existingStudentIds.has(rawStudent) ? rawStudent : null);
+          if (!studentId) throw new Error("لم يتم العثور على الطالب المرتبط بالدفعة");
+          const amount = Number(cellAt(row, ix.amount) || 0);
+          if (!(amount > 0)) continue;
+          const receiver = cellAt(row, ix.recv).includes("عبدالله") ? "عبدالله" : "محمد";
+          const date = parseImportDate(cellAt(row, ix.date) || undefined);
+          const { data: pay, error } = await supabase
+            .from("payments")
+            .insert({
+              student_id: studentId,
+              amount,
+              method: normalizeMethod(cellAt(row, ix.method)),
+              received_by: receiver,
+              payment_date: date,
+              notes: cellAt(row, ix.notes) || null,
+            })
+            .select("id")
+            .single();
+          if (error) throw error;
+          await supabase.from("cash_entries").insert({
+            owner: receiver,
+            entry_type: "in",
+            amount,
+            notes: "دفعة (استيراد)",
+            entry_date: date,
+            linked_payment_id: pay.id,
+            linked_student_id: studentId,
+          });
+          existingPaymentIds.add(pay.id);
+          counts.payments_new += 1;
+        } catch (e) {
+          counts.errors.push({ sheet: "Payments", row: i + 1, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+
+    // ── Cashbook (manual entries only; dedupe by id) ───────────────────────────
+    const cRows = sheets.cashbook ?? [];
+    if (cRows.length > 1) {
+      const h = cRows[0].map((x) => String(x ?? ""));
+      const col = (name: string) => findCol(h, [name]);
+      const ix = {
+        id: col("id"), owner: col("owner"), type: findCol(h, ["entry_type", "type"]), amount: col("amount"),
+        date: col("entry_date"), notes: col("notes"), linkedPay: findCol(h, ["linked_payment_id"]),
+        linkedStu: findCol(h, ["linked_student_id"]),
+      };
+      for (let i = 1; i < cRows.length; i++) {
+        const row = cRows[i].map((c) => String(c ?? ""));
+        try {
+          // Skip payment-linked entries — those are recreated by the payments import.
+          if (cellAt(row, ix.linkedPay)) continue;
+          const sheetId = cellAt(row, ix.id);
+          if (sheetId && existingCashIds.has(sheetId)) continue;
+          const owner = cellAt(row, ix.owner).includes("عبدالله") ? "عبدالله" : "محمد";
+          const type = cellAt(row, ix.type) === "out" || cellAt(row, ix.type).includes("مصروف") ? "out" : "in";
+          const amount = Number(cellAt(row, ix.amount) || 0);
+          if (!(amount > 0)) continue;
+          const rawStu = cellAt(row, ix.linkedStu);
+          const linkedStudent = sheetStudentIdToDbId.get(rawStu) ?? (existingStudentIds.has(rawStu) ? rawStu : null);
+          const { data: ins, error } = await supabase
+            .from("cash_entries")
+            .insert({
+              owner,
+              entry_type: type,
+              amount,
+              notes: cellAt(row, ix.notes) || null,
+              entry_date: parseImportDate(cellAt(row, ix.date) || undefined),
+              linked_student_id: linkedStudent,
+            })
+            .select("id")
+            .single();
+          if (error) throw error;
+          existingCashIds.add(ins.id);
+          counts.cashbook_new += 1;
+        } catch (e) {
+          counts.errors.push({ sheet: "Cashbook", row: i + 1, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+
+    await import("./data").then((m) =>
+      m.addAudit("system", "create", "import", null,
+        `استيراد نسخة احتياطية — ${counts.students_new} طالب جديد، ${counts.students_updated} محدّث، ${counts.payments_new} دفعة، ${counts.cashbook_new} حركة خزينة`,
+        { ...counts, errors: counts.errors.length }),
+    );
+    revalidateAll();
+    return { ok: true, data: counts };
+  } catch (e) {
+    return fail(e);
+  }
+}

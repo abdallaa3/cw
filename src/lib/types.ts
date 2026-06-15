@@ -12,6 +12,26 @@ export type GroupType = (typeof GROUP_TYPES)[number];
 export const SUBSCRIPTION_TYPES = ["monthly", "term"] as const;
 export type SubscriptionType = (typeof SUBSCRIPTION_TYPES)[number];
 
+// Study type (online / offline) — applies to both students and groups.
+export const STUDY_TYPES = ["online", "offline"] as const;
+export type StudyType = (typeof STUDY_TYPES)[number];
+
+// Online students can be private or group.
+export const ONLINE_TYPES = ["private", "group"] as const;
+export type OnlineType = (typeof ONLINE_TYPES)[number];
+
+// Arabic weekday names, indexed to match JS Date.getUTCDay() (0 = الأحد).
+export const WEEKDAYS = [
+  "الأحد",
+  "الإثنين",
+  "الثلاثاء",
+  "الأربعاء",
+  "الخميس",
+  "الجمعة",
+  "السبت",
+] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
 export const ENTRY_TYPES = ["in", "out"] as const;
 export type EntryType = (typeof ENTRY_TYPES)[number];
 
@@ -21,6 +41,13 @@ export type Group = {
   region: string;
   type: GroupType;
   subscription_type: SubscriptionType;
+  branch: string | null;
+  day1: string | null;
+  start_time1: string | null;
+  end_time1: string | null;
+  day2: string | null;
+  start_time2: string | null;
+  end_time2: string | null;
   notes: string | null;
   created_at: string;
   students_count?: number;
@@ -30,12 +57,17 @@ export type Student = {
   id: string;
   name: string;
   phone: string | null;
+  age: number | null;
+  study_type: StudyType;
+  online_type: OnlineType | null;
+  branch: string | null;
   group_id: string | null;
   group_number: string | null;
   region: string | null;
   total_amount: number;
   installments: number;
   installment_amount: number;
+  next_due_date: string | null;
   notes: string | null;
   created_at: string;
   paid_amount: number;
@@ -93,17 +125,52 @@ export type GroupSummary = {
   total_remaining: number;
 };
 
+export type TodayGroup = {
+  id: string;
+  group_number: string;
+  type: GroupType;
+  region: string;
+  branch: string | null;
+  students_count: number;
+  day: string;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+export type OwedStudent = {
+  id: string;
+  name: string;
+  phone: string | null;
+  group_number: string | null;
+  remaining_amount: number;
+  next_due_date: string | null;
+};
+
+export type NoGroupStudent = {
+  id: string;
+  name: string;
+  phone: string | null;
+  study_type: StudyType;
+  remaining_amount: number;
+};
+
 export type DashboardData = {
   total_collected: number;
   total_expected: number;
   total_remaining: number;
   total_students: number;
+  total_groups: number;
   paid_students_count: number;
   not_paid_students_count: number;
+  cash_balances: CashBalances;
   receivers_summary: ReceiverSummary[];
   methods_summary: MethodSummary[];
   groups_summary: GroupSummary[];
   recent_payments: Payment[];
+  today_schedule: TodayGroup[];
+  owed_students: OwedStudent[];
+  no_group_students: NoGroupStudent[];
+  recent_audits: AuditLog[];
 };
 
 export type CashBalances = Record<Receiver, number>;

@@ -1,4 +1,4 @@
-import type { EntryType, PaymentMethod, Receiver } from "./types";
+import { WEEKDAYS, type EntryType, type PaymentMethod, type Receiver } from "./types";
 
 export function money(value: unknown): number {
   const n = typeof value === "number" ? value : Number(String(value ?? "").replace(/[^\d.-]/g, ""));
@@ -35,14 +35,41 @@ export function formatDate(value: string | null | undefined, withTime = false): 
 export const METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: "كاش",
   bank_transfer: "تحويل بنكي",
-  vodafone_cash: "فودافون كاش",
-  instapay: "إنستاباي",
+  vodafone_cash: "محفظة",
+  instapay: "انستاباي",
 };
 
 export const ENTRY_TYPE_LABELS: Record<EntryType, string> = {
   in: "دخل",
   out: "مصروف",
 };
+
+export const STUDY_TYPE_LABELS: Record<string, string> = {
+  online: "أونلاين",
+  offline: "حضوري",
+};
+
+export const ONLINE_TYPE_LABELS: Record<string, string> = {
+  private: "خصوصي",
+  group: "جروب",
+};
+
+/** Today's weekday in Arabic, using Cairo time (0 = الأحد). */
+export function todayWeekday(): string {
+  return WEEKDAYS[cairoNow().getUTCDay()];
+}
+
+/** Format an "HH:MM" 24h time into a 12h Arabic-friendly label (e.g. 6:00 م). */
+export function formatTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const m = String(value).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return String(value);
+  let h = Number(m[1]);
+  const min = m[2];
+  const suffix = h >= 12 ? "م" : "ص";
+  h = h % 12 || 12;
+  return `${h}:${min} ${suffix}`;
+}
 
 export const ACTION_LABELS: Record<string, string> = {
   create: "إضافة",
@@ -55,6 +82,7 @@ export const ENTITY_LABELS: Record<string, string> = {
   group: "جروب",
   payment: "دفعة",
   cashbook: "خزينة",
+  auth: "دخول",
 };
 
 export function methodLabel(method: string | null | undefined): string {

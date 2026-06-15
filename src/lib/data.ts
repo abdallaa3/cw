@@ -1,16 +1,19 @@
 // Server-side data layer — mirrors the Flask routes/business logic.
 // All access goes through the service-role client (RLS bypassed).
 import { getSupabaseAdmin } from "./supabase";
-import { todayIso } from "./utils";
+import { todayIso, todayWeekday } from "./utils";
 import type {
   AuditLog,
   CashBalances,
   CashEntry,
   DashboardData,
   Group,
+  NoGroupStudent,
+  OwedStudent,
   Payment,
   Receiver,
   Student,
+  TodayGroup,
 } from "./types";
 
 const RECEIVERS: Receiver[] = ["محمد", "عبدالله"];
@@ -32,6 +35,19 @@ export async function addAudit(
     description,
     details: details ? details : null,
   });
+}
+
+// Optional text field → trimmed string or null.
+function optText(value: unknown): string | null {
+  const s = String(value ?? "").trim();
+  return s || null;
+}
+
+function numOrNull(value: unknown): number | null {
+  const s = String(value ?? "").trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 // ── GROUPS ──────────────────────────────────────────────────────────────────
@@ -64,16 +80,20 @@ export async function getGroup(id: string): Promise<(Group & { students: Student
   return { ...(group as Group), students_count: students.length, students };
 }
 
+const GROUP_SCHEDULE_KEYS = ["branch", "day1", "start_time1", "end_time1", "day2", "start_time2", "end_time2"] as const;
+
 export async function createGroup(payload: Record<string, unknown>) {
   const supabase = getSupabaseAdmin();
-  const row = {
+  const row: Record<string, unknown> = {
     group_number: String(payload.group_number ?? "").trim(),
     region: String(payload.region ?? "").trim(),
     type: String(payload.type ?? "offline"),
     subscription_type: String(payload.subscription_type ?? "monthly"),
-    notes: String(payload.notes ?? "").trim() || null,
+    notes: optText(payload.notes),
   };
+  for (const key of GROUP_SCHEDULE_KEYS) row[key] = optText(payload[key]);
   if (!row.group_number || !row.region) throw new Error("رقم الجروب والمنطقة مطلوبان");
+  if (!row.day1) throw new Error("يوم الميعاد الأول مطلوب");
   const { data, error } = await supabase.from("groups").insert(row).select("*").single();
   if (error) throw error;
   await addAudit("system", "create", "group", data.id, `إضافة جروب جديد — ${data.group_number}`, row);
@@ -86,7 +106,8 @@ export async function updateGroup(id: string, payload: Record<string, unknown>) 
   for (const key of ["group_number", "region", "type", "subscription_type"]) {
     if (payload[key] != null) patch[key] = String(payload[key]).trim();
   }
-  if ("notes" in payload) patch.notes = String(payload.notes ?? "").trim() || null;
+  if ("notes" in payload) patch.notes = optText(payload.notes);
+  for (const key of GROUP_SCHEDULE_KEYS) if (key in payload) patch[key] = optText(payload[key]);
   const { data, error } = await supabase.from("groups").update(patch).eq("id", id).select("*").single();
   if (error) throw error;
   await addAudit("system", "update", "group", id, `تعديل الجروب — ${data.group_number}`, patch);
@@ -174,26 +195,53 @@ export async function getStudent(id: string): Promise<Student | null> {
   } as Student;
 }
 
+// Creating a student ALWAYS records a mandatory first payment, which in turn
+// auto-creates the linked cashbook entry for the selected receiver.
 export async function createStudent(payload: Record<string, unknown>) {
   const supabase = getSupabaseAdmin();
   const name = String(payload.name ?? "").trim();
   if (!name) throw new Error("اسم الطالب مطلوب");
+
+  const studyType = String(payload.study_type ?? "offline") === "online" ? "online" : "offline";
+  const firstAmount = Number(payload.first_payment_amount ?? 0);
+  const receiver = String(payload.received_by ?? "") as Receiver;
+  const method = String(payload.method ?? "cash");
+  if (!(firstAmount > 0)) throw new Error("الدفعة الأولى مطلوبة عند إضافة الطالب");
+  if (!RECEIVERS.includes(receiver)) throw new Error("اختر مستلم الدفعة الأولى (محمد أو عبدالله)");
+
   const row = {
     name,
-    phone: String(payload.phone ?? "").trim() || null,
+    phone: optText(payload.phone),
+    age: numOrNull(payload.age),
+    study_type: studyType,
+    online_type: studyType === "online" ? optText(payload.online_type) : null,
+    branch: studyType === "offline" ? optText(payload.branch) : null,
     group_id: String(payload.group_id ?? "") || null,
     total_amount: Number(payload.total_amount ?? 0),
     installments: Number(payload.installments ?? 1) || 1,
     installment_amount: Number(payload.installment_amount ?? 0),
-    notes: String(payload.notes ?? "").trim() || null,
+    next_due_date: optText(payload.next_due_date),
+    notes: optText(payload.notes),
   };
   const { data, error } = await supabase.from("students").insert(row).select("*").single();
   if (error) throw error;
   await addAudit("system", "create", "student", data.id, `إضافة طالب جديد — ${data.name}`, {
     name: data.name,
     phone: data.phone ?? "",
+    study_type: studyType,
     group_id: data.group_id,
   });
+
+  // Mandatory first payment → also creates the linked cashbook entry + its audit.
+  await createPayment({
+    student_id: data.id,
+    amount: firstAmount,
+    method,
+    received_by: receiver,
+    payment_date: String(payload.payment_date || todayIso()),
+    notes: "دفعة أولى عند التسجيل",
+  });
+
   return data as Student;
 }
 
@@ -205,12 +253,22 @@ export async function updateStudent(id: string, payload: Record<string, unknown>
     if (!name) throw new Error("اسم الطالب لا يمكن أن يكون فارغاً");
     patch.name = name;
   }
-  if ("phone" in payload) patch.phone = String(payload.phone ?? "").trim() || null;
+  if ("phone" in payload) patch.phone = optText(payload.phone);
+  if ("age" in payload) patch.age = numOrNull(payload.age);
+  if ("study_type" in payload) {
+    patch.study_type = String(payload.study_type) === "online" ? "online" : "offline";
+  }
+  if ("online_type" in payload) patch.online_type = optText(payload.online_type);
+  if ("branch" in payload) patch.branch = optText(payload.branch);
   if ("group_id" in payload) patch.group_id = String(payload.group_id ?? "") || null;
   if ("total_amount" in payload) patch.total_amount = Number(payload.total_amount ?? 0);
   if ("installments" in payload) patch.installments = Number(payload.installments ?? 1) || 1;
   if ("installment_amount" in payload) patch.installment_amount = Number(payload.installment_amount ?? 0);
-  if ("notes" in payload) patch.notes = String(payload.notes ?? "").trim() || null;
+  if ("next_due_date" in payload) patch.next_due_date = optText(payload.next_due_date);
+  if ("notes" in payload) patch.notes = optText(payload.notes);
+  // Keep online_type / branch consistent with the (possibly updated) study type.
+  if (patch.study_type === "online") patch.branch = null;
+  if (patch.study_type === "offline") patch.online_type = null;
   const { data, error } = await supabase.from("students").update(patch).eq("id", id).select("*").single();
   if (error) throw error;
   await addAudit("system", "update", "student", id, `تعديل بيانات الطالب — ${data.name}`, patch);
@@ -326,6 +384,7 @@ export async function updatePayment(id: string, payload: Record<string, unknown>
   const { data: payment, error } = await supabase.from("payments").update(patch).eq("id", id).select("*").single();
   if (error) throw error;
 
+  // Keep the linked cashbook entry in sync (never create a duplicate).
   const { data: linked } = await supabase
     .from("cash_entries")
     .select("id")
@@ -348,6 +407,7 @@ export async function deletePayment(id: string) {
   const { data: payment } = await supabase.from("payments").select("*").eq("id", id).single();
   if (!payment) return true;
   const { data: student } = await supabase.from("students").select("name").eq("id", payment.student_id).single();
+  // The linked cashbook entry is removed automatically via ON DELETE CASCADE.
   const { error } = await supabase.from("payments").delete().eq("id", id);
   if (error) throw error;
   await addAudit(payment.received_by, "delete", "payment", id, `حذف دفعة — ${student?.name ?? ""} — ${payment.amount} ج`, {
@@ -416,6 +476,10 @@ export async function createCashEntry(payload: Record<string, unknown>) {
 
 export async function updateCashEntry(id: string, payload: Record<string, unknown>) {
   const supabase = getSupabaseAdmin();
+  const { data: existing } = await supabase.from("cash_entries").select("linked_payment_id").eq("id", id).single();
+  if (existing?.linked_payment_id) {
+    throw new Error("هذه الحركة مرتبطة بدفعة طالب، عدّلها من صفحة الدفعات");
+  }
   const patch: Record<string, unknown> = {};
   if ("amount" in payload) patch.amount = Number(payload.amount ?? 0);
   if ("notes" in payload) patch.notes = String(payload.notes ?? "").trim() || null;
@@ -475,11 +539,14 @@ export async function listAuditLogs(filters: {
 // ── DASHBOARD ───────────────────────────────────────────────────────────────
 export async function getDashboard(): Promise<DashboardData> {
   const supabase = getSupabaseAdmin();
-  const [{ data: students }, { data: payments }, { data: groups }] = await Promise.all([
-    supabase.from("students").select("*"),
-    supabase.from("payments").select("*"),
-    supabase.from("groups").select("*"),
-  ]);
+  const [{ data: students }, { data: payments }, { data: groups }, { data: cashEntries }, { data: audits }] =
+    await Promise.all([
+      supabase.from("students").select("*"),
+      supabase.from("payments").select("*"),
+      supabase.from("groups").select("*"),
+      supabase.from("cash_entries").select("owner, entry_type, amount"),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(8),
+    ]);
 
   const paidByStudent = new Map<string, number>();
   for (const p of payments ?? []) {
@@ -547,16 +614,89 @@ export async function getDashboard(): Promise<DashboardData> {
       } as Payment;
     });
 
+  // Cash balances per receiver.
+  const cash_balances: CashBalances = { محمد: 0, عبدالله: 0 };
+  for (const e of cashEntries ?? []) {
+    if (e.owner in cash_balances) {
+      cash_balances[e.owner as Receiver] += e.entry_type === "in" ? Number(e.amount) : -Number(e.amount);
+    }
+  }
+
+  // Today's group schedule (day1 or day2 matches today).
+  const weekday = todayWeekday();
+  const today_schedule: TodayGroup[] = [];
+  const groupStudentCount = new Map<string, number>();
+  for (const s of students ?? []) {
+    if (s.group_id) groupStudentCount.set(s.group_id, (groupStudentCount.get(s.group_id) ?? 0) + 1);
+  }
+  for (const g of groups ?? []) {
+    const base = {
+      id: g.id,
+      group_number: g.group_number,
+      type: g.type,
+      region: g.region,
+      branch: g.branch ?? null,
+      students_count: groupStudentCount.get(g.id) ?? 0,
+    };
+    if (g.day1 && String(g.day1).trim() === weekday) {
+      today_schedule.push({ ...base, day: g.day1, start_time: g.start_time1 ?? null, end_time: g.end_time1 ?? null });
+    }
+    if (g.day2 && String(g.day2).trim() === weekday) {
+      today_schedule.push({ ...base, day: g.day2, start_time: g.start_time2 ?? null, end_time: g.end_time2 ?? null });
+    }
+  }
+  today_schedule.sort((a, b) => String(a.start_time ?? "").localeCompare(String(b.start_time ?? "")));
+
+  // Students who still owe money (remaining > 0).
+  const owed_students: OwedStudent[] = (students ?? [])
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      phone: s.phone ?? null,
+      group_number: s.group_id ? groupsById.get(s.group_id)?.group_number ?? null : null,
+      remaining_amount: Number(s.total_amount ?? 0) - (paidByStudent.get(s.id) ?? 0),
+      next_due_date: s.next_due_date ?? null,
+    }))
+    .filter((s) => s.remaining_amount > 0)
+    .sort((a, b) => {
+      if (a.next_due_date && b.next_due_date) return a.next_due_date.localeCompare(b.next_due_date);
+      if (a.next_due_date) return -1;
+      if (b.next_due_date) return 1;
+      return b.remaining_amount - a.remaining_amount;
+    });
+
+  // Students with no group.
+  const no_group_students: NoGroupStudent[] = (students ?? [])
+    .filter((s) => !s.group_id)
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      phone: s.phone ?? null,
+      study_type: (s.study_type === "online" ? "online" : "offline") as NoGroupStudent["study_type"],
+      remaining_amount: Number(s.total_amount ?? 0) - (paidByStudent.get(s.id) ?? 0),
+    }));
+
+  const recent_audits: AuditLog[] = (audits ?? []).map((l) => ({
+    ...l,
+    details: l.details ? (typeof l.details === "string" ? l.details : JSON.stringify(l.details)) : null,
+  })) as AuditLog[];
+
   return {
     total_collected,
     total_expected,
     total_remaining: total_expected - total_collected,
     total_students,
+    total_groups: (groups ?? []).length,
     paid_students_count,
     not_paid_students_count,
+    cash_balances,
     receivers_summary: [...recvMap.entries()].map(([received_by, v]) => ({ received_by, ...v })),
     methods_summary: [...methodMap.entries()].map(([method, v]) => ({ method, ...v })),
     groups_summary,
     recent_payments,
+    today_schedule,
+    owed_students,
+    no_group_students,
+    recent_audits,
   };
 }

@@ -9,6 +9,7 @@ import { saveCashEntryAction, deleteCashEntryAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
 import { RECEIVERS, type CashBalances, type CashEntry } from "@/lib/types";
 import { egp, formatDate, ENTRY_TYPE_LABELS, todayIso } from "@/lib/utils";
+import { writeXlsx } from "@/lib/xlsx";
 import type { PaymentStudent } from "@/components/PaymentForm";
 
 type FormState = {
@@ -106,6 +107,28 @@ export function CashbookView({
     } else toast(res.error, "error");
   }
 
+  async function exportCashbook() {
+    try {
+      const data: (string | number)[][] = [
+        ["id", "الشخص", "النوع", "المبلغ", "التاريخ", "ملاحظات", "طالب مرتبط", "مرتبطة بدفعة"],
+        ...filtered.map((e) => [
+          e.id, e.owner, ENTRY_TYPE_LABELS[e.entry_type], e.amount, e.entry_date,
+          e.notes ?? "", e.linked_student_name ?? "", e.linked_payment_id ? "نعم" : "لا",
+        ]),
+      ];
+      const blob = await writeXlsx([{ name: "الخزينة", rows: data }]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cashbook_${todayIso()}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("تم تصدير الخزينة");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "فشل التصدير", "error");
+    }
+  }
+
   return (
     <>
       <div className="receivers-grid">
@@ -136,6 +159,7 @@ export function CashbookView({
           <option value="out">مصروف فقط</option>
         </select>
         <div className="spacer" />
+        <button className="btn btn-success" onClick={exportCashbook}>📥 تصدير</button>
         <button className="btn btn-primary" onClick={openCreate}>+ حركة خزينة</button>
       </div>
 

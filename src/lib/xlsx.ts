@@ -167,3 +167,71 @@ export async function writeXlsx(sheets: SheetData[]): Promise<Blob> {
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
+
+// ── READ ALL SHEETS (round-trip backup import) ───────────────────────────────
+function parseRows(sheetXml: string, shared: string[]): string[][] {
+  const rows: string[][] = [];
+  const rowMatches = sheetXml.match(/<row[^>]*>[\s\S]*?<\/row>/g) ?? [];
+  for (const rowXml of rowMatches) {
+    const cells: string[] = [];
+    const cellMatches = [...rowXml.matchAll(/<c\s+r="([A-Z]+)\d+"(?:[^>]*\st="([^"]+)")?[^>]*>([\s\S]*?)<\/c>/g)];
+    for (const m of cellMatches) {
+      const colIdx = colToIndex(m[1]);
+      const type = m[2];
+      const inner = m[3];
+      let value = "";
+      if (type === "s") {
+        const vMatch = inner.match(/<v>([\s\S]*?)<\/v>/);
+        if (vMatch) value = shared[Number(vMatch[1])] ?? "";
+      } else if (type === "inlineStr") {
+        const tMatch = inner.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+        if (tMatch) value = decodeXml(tMatch[1]);
+      } else {
+        const vMatch = inner.match(/<v>([\s\S]*?)<\/v>/);
+        if (vMatch) value = decodeXml(vMatch[1]);
+      }
+      cells[colIdx] = value;
+    }
+    for (let i = 0; i < cells.length; i++) if (cells[i] === undefined) cells[i] = "";
+    rows.push(cells);
+  }
+  return rows;
+}
+
+/** Parse every worksheet of an .xlsx file into { sheetName: rows[][] }. */
+export async function readAllSheets(input: ArrayBuffer | Uint8Array): Promise<Record<string, string[][]>> {
+  const zip = await JSZip.loadAsync(input);
+
+  const shared: string[] = [];
+  const sstFile = zip.file("xl/sharedStrings.xml");
+  if (sstFile) {
+    const sst = await sstFile.async("string");
+    const matches = sst.match(/<si>[\s\S]*?<\/si>/g) ?? [];
+    for (const si of matches) {
+      const texts = [...si.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((m) => decodeXml(m[1]));
+      shared.push(texts.join(""));
+    }
+  }
+
+  const wb = (await zip.file("xl/workbook.xml")?.async("string")) ?? "";
+  const relsXml = (await zip.file("xl/_rels/workbook.xml.rels")?.async("string")) ?? "";
+  const relMap = new Map<string, string>();
+  for (const tag of relsXml.match(/<Relationship\b[^>]*>/g) ?? []) {
+    const id = tag.match(/Id="([^"]+)"/)?.[1];
+    const target = tag.match(/Target="([^"]+)"/)?.[1];
+    if (id && target) relMap.set(id, target);
+  }
+
+  const out: Record<string, string[][]> = {};
+  for (const tag of wb.match(/<sheet\b[^>]*\/?>/g) ?? []) {
+    const name = decodeXml(tag.match(/name="([^"]+)"/)?.[1] ?? "");
+    const rid = tag.match(/r:id="([^"]+)"/)?.[1] ?? "";
+    let target = relMap.get(rid) ?? "";
+    if (!name || !target) continue;
+    if (!target.startsWith("xl/")) target = `xl/${target.replace(/^\//, "")}`;
+    const file = zip.file(target);
+    if (!file) continue;
+    out[name] = parseRows(await file.async("string"), shared);
+  }
+  return out;
+}

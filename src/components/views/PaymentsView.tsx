@@ -7,7 +7,8 @@ import { PaymentForm, type PaymentStudent } from "@/components/PaymentForm";
 import { toast } from "@/components/toast";
 import { deletePaymentAction } from "@/lib/actions";
 import { PAYMENT_METHODS, RECEIVERS, type Payment } from "@/lib/types";
-import { egp, METHOD_LABELS, methodLabel, formatDate } from "@/lib/utils";
+import { egp, METHOD_LABELS, methodLabel, formatDate, todayIso } from "@/lib/utils";
+import { writeXlsx } from "@/lib/xlsx";
 
 export function PaymentsView({ payments, students }: { payments: Payment[]; students: PaymentStudent[] }) {
   const router = useRouter();
@@ -40,6 +41,27 @@ export function PaymentsView({ payments, students }: { payments: Payment[]; stud
     } else toast(res.error, "error");
   }
 
+  async function exportPayments() {
+    try {
+      const rows: (string | number)[][] = [
+        ["id", "اسم الطالب", "الجروب", "المبلغ", "الطريقة", "المستلم", "التاريخ", "ملاحظات"],
+        ...filtered.map((p) => [
+          p.id, p.student_name ?? "", p.group_number ?? "", p.amount, methodLabel(p.method), p.received_by, p.payment_date, p.notes ?? "",
+        ]),
+      ];
+      const blob = await writeXlsx([{ name: "الدفعات", rows }]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `payments_${todayIso()}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("تم تصدير الدفعات");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "فشل التصدير", "error");
+    }
+  }
+
   return (
     <>
       <div className="toolbar">
@@ -55,6 +77,7 @@ export function PaymentsView({ payments, students }: { payments: Payment[]; stud
         <input className="field" type="date" value={to} onChange={(e) => setTo(e.target.value)} title="إلى تاريخ" />
         <div className="spacer" />
         <span className="badge green">الإجمالي: {egp(total)}</span>
+        <button className="btn btn-success" onClick={exportPayments}>📥 تصدير</button>
         <button className="btn btn-primary" onClick={() => { setEditing(null); setOpen(true); }}>+ تسجيل دفعة</button>
       </div>
 
