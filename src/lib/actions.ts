@@ -855,8 +855,29 @@ export async function importWorkbookAction(sheets: WorkbookSheets, opts: Workboo
 // Backups → Supabase Storage (bucket: "backups"). Manual button + cron route.
 // ════════════════════════════════════════════════════════════════════════════
 const BACKUP_BUCKET = "backups";
+const AUTO_BACKUP_RETENTION = 8; // keep the latest N auto backups
 
-export async function createBackupAction(): Promise<Result> {
+// Prune old auto backups after a new one is created successfully.
+// Keeps the latest AUTO_BACKUP_RETENTION files. Never deletes manual backups.
+// Never deletes the newly created file. Safe: if listing fails, does nothing.
+async function pruneAutoBackups(supabase: ReturnType<typeof getSupabaseAdmin>, newFile: string): Promise<void> {
+  const { data } = await supabase.storage.from(BACKUP_BUCKET).list("", { limit: 200, sortBy: { column: "name", order: "desc" } });
+  if (!data) return;
+  const autoFiles = data
+    .filter((f) => f.name.startsWith("codewave-auto-backup-") && f.name.endsWith(".xlsx"))
+    .map((f) => f.name)
+    .sort((a, b) => b.localeCompare(a)); // newest first (filenames carry timestamp)
+  const toDelete = autoFiles.slice(AUTO_BACKUP_RETENTION).filter((n) => n !== newFile);
+  if (toDelete.length === 0) return;
+  await supabase.storage.from(BACKUP_BUCKET).remove(toDelete);
+  await import("./data").then((m) =>
+    m.addAudit("system", "delete", "backup", null,
+      `تنظيف ${toDelete.length} نسخة احتياطية تلقائية قديمة`,
+      { deleted: toDelete }),
+  ).catch(() => undefined);
+}
+
+export async function createBackupAction(type: "manual" | "auto" = "manual"): Promise<Result> {
   try {
     const supabase = getSupabaseAdmin();
     const [{ data: students }, { data: groups }, { data: payments }, { data: cash }, { data: audits }] = await Promise.all([
@@ -907,19 +928,24 @@ export async function createBackupAction(): Promise<Result> {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    const fname = `codewave-backup-${stamp}.xlsx`;
+    const fname = `codewave-${type}-backup-${stamp}.xlsx`;
 
     const { error } = await supabase.storage
       .from(BACKUP_BUCKET)
       .upload(fname, bytes, { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", upsert: false });
     if (error) throw new Error(`فشل رفع النسخة الاحتياطية: ${error.message} (تأكد من وجود bucket باسم 'backups')`);
 
+    // For auto backups: clean up old ones after confirming the new file was uploaded.
+    if (type === "auto") {
+      await pruneAutoBackups(supabase, fname).catch(() => undefined);
+    }
+
     await import("./data").then((m) =>
-      m.addAudit("system", "create", "backup", null, `إنشاء نسخة احتياطية — ${fname}`, {
-        file: fname, students: (students ?? []).length, groups: (groups ?? []).length, payments: (payments ?? []).length,
+      m.addAudit("system", "create", "backup", null, `إنشاء نسخة احتياطية (${type}) — ${fname}`, {
+        file: fname, type, students: (students ?? []).length, groups: (groups ?? []).length, payments: (payments ?? []).length,
       }),
     ).catch(() => undefined);
-    return { ok: true, data: { name: fname } };
+    return { ok: true, data: { name: fname, type } };
   } catch (e) {
     return fail(e);
   }
@@ -937,14 +963,31 @@ export async function listBackupsAction(): Promise<Result> {
     const out = [];
     for (const f of files) {
       const { data: signed } = await supabase.storage.from(BACKUP_BUCKET).createSignedUrl(f.name, 3600);
+      const backupType: "manual" | "auto" = f.name.startsWith("codewave-auto-backup-") ? "auto" : "manual";
       out.push({
         name: f.name,
         size: (f.metadata as { size?: number } | null)?.size ?? 0,
         created_at: f.created_at ?? null,
         url: signed?.signedUrl ?? "",
+        type: backupType,
       });
     }
     return { ok: true, data: out };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function deleteBackupAction(name: string): Promise<Result> {
+  try {
+    if (!name || !name.endsWith(".xlsx")) throw new Error("اسم ملف غير صالح");
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase.storage.from(BACKUP_BUCKET).remove([name]);
+    if (error) throw error;
+    await import("./data").then((m) =>
+      m.addAudit("system", "delete", "backup", null, `حذف نسخة احتياطية — ${name}`, { file: name }),
+    ).catch(() => undefined);
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }

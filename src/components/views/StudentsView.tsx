@@ -269,13 +269,13 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
             </div>
             <div className="form-group">
               <label className="form-label">التليفون *</label>
-              <input className="form-control" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              <input className="form-control" type="text" inputMode="numeric" pattern="[0-9]*" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             </div>
           </div>
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">السن *</label>
-              <input className="form-control" type="number" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} />
+              <input className="form-control" type="text" inputMode="numeric" pattern="[0-9]*" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} />
             </div>
             <div className="form-group">
               <label className="form-label">نوع الدراسة *</label>
@@ -309,7 +309,7 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">سعر الكورس / الإجمالي *</label>
-              <input className="form-control" type="number" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
+              <input className="form-control" type="text" inputMode="decimal" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} />
             </div>
             <div className="form-group">
               <label className="form-label">تاريخ استحقاق القسط القادم (اختياري)</label>
@@ -319,11 +319,11 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">عدد الأقساط</label>
-              <input className="form-control" type="number" value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} />
+              <input className="form-control" type="text" inputMode="numeric" pattern="[0-9]*" value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} />
             </div>
             <div className="form-group">
               <label className="form-label">قيمة القسط الواحد</label>
-              <input className="form-control" type="number" value={form.installment_amount} onChange={(e) => setForm({ ...form, installment_amount: e.target.value })} />
+              <input className="form-control" type="text" inputMode="decimal" value={form.installment_amount} onChange={(e) => setForm({ ...form, installment_amount: e.target.value })} />
             </div>
           </div>
 
@@ -333,7 +333,7 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
               <div className="form-row">
                 <div className="form-group">
                   <label className="form-label">مبلغ الدفعة الأولى *</label>
-                  <input className="form-control" type="number" value={form.first_payment_amount} onChange={(e) => setForm({ ...form, first_payment_amount: e.target.value })} />
+                  <input className="form-control" type="text" inputMode="decimal" value={form.first_payment_amount} onChange={(e) => setForm({ ...form, first_payment_amount: e.target.value })} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">المستلم *</label>

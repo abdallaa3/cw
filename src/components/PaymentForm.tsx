@@ -99,7 +99,7 @@ export function PaymentForm({
       <div className="form-row">
         <div className="form-group">
           <label className="form-label">المبلغ</label>
-          <input className="form-control" type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+          <input className="form-control" type="text" inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
         </div>
         <div className="form-group">
           <label className="form-label">تاريخ الدفع</label>
