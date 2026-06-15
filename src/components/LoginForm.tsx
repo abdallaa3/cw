@@ -1,12 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Lock } from "lucide-react";
 
 export function LoginForm() {
   const router = useRouter();
+  const params = useSearchParams();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -15,29 +16,26 @@ export function LoginForm() {
     event.preventDefault();
     setError("");
     setLoading(true);
-
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ password }),
       });
-
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         setError(
           response.status === 401
-            ? "Invalid password. Please try again."
-            : payload.error || "Login failed. Check server configuration.",
+            ? "كلمة المرور غير صحيحة، حاول مرة أخرى"
+            : payload.error || "تعذّر تسجيل الدخول — تحقق من إعدادات الخادم",
         );
         return;
       }
-
-      router.push("/dashboard");
+      const next = params.get("next") || "/dashboard";
+      router.push(next.startsWith("/") ? next : "/dashboard");
       router.refresh();
-    } catch (error) {
-      console.error("Login request failed", error);
-      setError("Login failed. Please check your connection and server configuration.");
+    } catch {
+      setError("تعذّر تسجيل الدخول — تحقق من اتصالك بالإنترنت");
     } finally {
       setLoading(false);
     }
@@ -45,29 +43,33 @@ export function LoginForm() {
 
   return (
     <main className="login-screen">
-      <form onSubmit={submit} className="login-card">
-        <Image src="/logo.jpg" alt="Code Wave Academy logo" width={64} height={64} className="logo-image mb-4" />
-        <h1>Code Wave Academy</h1>
-        <p>نظام الإدارة المالية</p>
-        <div className="mb-5 inline-flex items-center gap-2 text-[var(--primary)]">
-          <Lock size={20} />
-          <span className="font-bold">Admin Login</span>
-        </div>
-          <label className="form-label" htmlFor="password">كلمة المرور / Admin password</label>
+      <div className="login-card">
+        <Image src="/codewave-logo.png" alt="Code Wave Academy" width={84} height={84} className="login-logo" priority />
+        <h1>Code Wave <span>Academy</span></h1>
+        <p className="login-sub">نظام الإدارة المالية</p>
+        <span className="login-badge"><Lock size={15} /> دخول الإدارة</span>
+
+        <form onSubmit={submit} className="login-form">
+          <label className="login-field-label" htmlFor="password">كلمة المرور</label>
           <input
             id="password"
-            className="input"
+            className="login-input"
             type="password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="Enter password"
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
             autoComplete="current-password"
+            autoFocus
+            dir="ltr"
           />
-          {error ? <p className="login-error">{error}</p> : null}
-          <button className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
+          {error ? <div className="login-error">{error}</div> : null}
+          <button className="btn btn-primary btn-block" disabled={loading || !password}>
+            {loading ? (<><span className="spinner" /> جاري الدخول...</>) : "دخول"}
           </button>
-      </form>
+        </form>
+
+        <div className="login-foot">© Code Wave Academy</div>
+      </div>
     </main>
   );
 }

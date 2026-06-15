@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { getSupabaseAdmin } from "./supabase";
+import { todayIso } from "./utils";
+import { writeXlsxBytes } from "./xlsx";
 import {
   createCashEntry,
   createGroup,
@@ -593,6 +595,348 @@ export async function importBackupAction(sheets: BackupSheets): Promise<Result> 
     );
     revalidateAll();
     return { ok: true, data: counts };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Source-workbook importer (the original Google-Sheets bookkeeping export).
+// Structure detected from the real file:
+//   • numbered tabs (12..29) = groups; each tab's rows are that group's students
+//     headers: الاسم | رقم التلفون | سعر الكورس | دفع
+//   • 'online' tab = online students (الاسم | الرقم | المبلغ | دفع)
+//   • 'الفلوس' tab = two-person manual treasury ledger → flagged for manual
+//     review, never auto-posted (too ambiguous to map safely)
+// Historical paid amounts have no receiver in the sheet, so the caller supplies
+// a default receiver/method explicitly (no silent fake values). dryRun=true
+// computes the preview counts without writing anything.
+// ════════════════════════════════════════════════════════════════════════════
+
+type WorkbookSheets = Record<string, string[][]>;
+type WorkbookOpts = { defaultReceiver?: string; defaultMethod?: string; dryRun?: boolean };
+type WorkbookPlan = {
+  groups_new: number;
+  groups_existing: number;
+  students_new: number;
+  students_updated: number;
+  payments_new: number;
+  cashbook_new: number;
+  invalid_rows: number;
+  duplicate_warnings: string[];
+  detected: Array<{ sheet: string; kind: string; rows: number }>;
+  manual_review: string[];
+  errors: Array<{ sheet: string; row: number; error: string }>;
+};
+
+function phoneKey(raw: string): string {
+  let d = String(raw ?? "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.length === 10 && d.startsWith("1")) d = `0${d}`; // Excel dropped the leading 0
+  // canonical = last 10 digits (handles +20 / 0 prefixes for matching)
+  return d.length > 10 ? d.slice(-10) : d;
+}
+function storePhone(raw: string): string | null {
+  let d = String(raw ?? "").replace(/\D/g, "");
+  if (!d) return null;
+  if (d.length === 10 && d.startsWith("1")) d = `0${d}`;
+  return d;
+}
+function isSummaryName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return true;
+  if (/^\d+([.,]\d+)?$/.test(n)) return true; // pure number
+  return ["اجمالي", "إجمالي", "الاجمالي", "مجموع", "المجموع", "الباقي", "total"].some((k) => n.includes(k));
+}
+function colIndex(header: string[], keys: string[], fallback: number): number {
+  const idx = findCol(header, keys);
+  return idx >= 0 ? idx : fallback;
+}
+
+// Returns the parsed student rows for one numbered group / online sheet.
+function parseStudentSheet(rows: string[][], online: boolean) {
+  if (!rows.length) return { items: [] as Array<Record<string, string>>, invalid: 0 };
+  const header = rows[0].map((x) => String(x ?? ""));
+  const nameIx = colIndex(header, ["اسم", "الاسم"], 0);
+  const phoneIx = colIndex(header, ["تلفون", "التلفون", "الرقم", "رقم", "موبايل"], online ? 1 : 2);
+  const priceIx = colIndex(header, ["سعر", "المبلغ", "مبلغ", "سعر الكورس"], 3);
+  const paidIx = colIndex(header, ["دفع", "المدفوع"], 4);
+  const items: Array<Record<string, string>> = [];
+  let invalid = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r].map((c) => String(c ?? ""));
+    const name = (row[nameIx] ?? "").trim();
+    if (!name) continue; // blank line — skip silently
+    if (isSummaryName(name)) continue; // totals / count rows
+    const phone = (row[phoneIx] ?? "").trim();
+    const price = String(row[priceIx] ?? "").trim();
+    const paid = String(row[paidIx] ?? "").trim();
+    if (!phone && !price && !paid) { invalid += 1; continue; } // name only, no data
+    items.push({ name, phone, price, paid });
+  }
+  return { items, invalid };
+}
+
+export async function importWorkbookAction(sheets: WorkbookSheets, opts: WorkbookOpts = {}): Promise<Result> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const dryRun = opts.dryRun !== false ? opts.dryRun === true : true; // default handled below
+    const isDry = !!opts.dryRun;
+    const receiver = opts.defaultReceiver === "عبدالله" ? "عبدالله" : "محمد";
+    const method = ["cash", "bank_transfer", "vodafone_cash", "instapay"].includes(String(opts.defaultMethod))
+      ? String(opts.defaultMethod)
+      : "cash";
+    void dryRun;
+
+    const plan: WorkbookPlan = {
+      groups_new: 0, groups_existing: 0, students_new: 0, students_updated: 0,
+      payments_new: 0, cashbook_new: 0, invalid_rows: 0, duplicate_warnings: [],
+      detected: [], manual_review: [], errors: [],
+    };
+
+    // Existing data for matching.
+    const [{ data: dbGroups }, { data: dbStudents }] = await Promise.all([
+      supabase.from("groups").select("id, group_number"),
+      supabase.from("students").select("id, name, phone, group_id"),
+    ]);
+    const groupByNumber = new Map((dbGroups ?? []).map((g) => [String(g.group_number).trim(), g.id]));
+    const studentByPhone = new Map<string, string>();
+    const studentByName = new Map<string, string[]>();
+    for (const s of dbStudents ?? []) {
+      const pk = phoneKey(s.phone ?? "");
+      if (pk) studentByPhone.set(pk, s.id);
+      const nk = (s.name ?? "").trim();
+      if (nk) studentByName.set(nk, [...(studentByName.get(nk) ?? []), s.id]);
+    }
+    const seenPhones = new Set<string>();
+
+    // Classify sheets.
+    const groupSheets: Array<{ name: string; number: string; rows: string[][] }> = [];
+    let onlineSheet: string[][] | null = null;
+    for (const [name, rows] of Object.entries(sheets)) {
+      const trimmed = name.trim();
+      if (/^\d+$/.test(trimmed)) {
+        const num = Number(trimmed);
+        if (num >= 12 && num <= 29) groupSheets.push({ name: trimmed, number: trimmed, rows });
+        else plan.manual_review.push(`تبويب رقمي خارج النطاق 12–29: '${name}' (لم يُستورد)`);
+      } else if (trimmed.toLowerCase().includes("online")) {
+        onlineSheet = rows;
+      } else if (trimmed.includes("الفلوس")) {
+        plan.manual_review.push(`تبويب الفلوس (الخزينة اليدوية) يحتاج مراجعة يدوية — لم يُستورد تلقائياً`);
+      }
+    }
+
+    // Helper: upsert one student record + optional first payment.
+    async function handleStudent(it: Record<string, string>, groupId: string | null, studyType: "online" | "offline") {
+      const pk = phoneKey(it.phone);
+      if (pk && seenPhones.has(pk)) plan.duplicate_warnings.push(`تكرار رقم: ${it.name} (${it.phone})`);
+      if (pk) seenPhones.add(pk);
+
+      let dbId: string | null = null;
+      if (pk && studentByPhone.has(pk)) dbId = studentByPhone.get(pk)!;
+      else if (!pk) {
+        const matches = studentByName.get(it.name.trim());
+        if (matches && matches.length === 1) dbId = matches[0];
+        else if (matches && matches.length > 1) plan.duplicate_warnings.push(`اسم مكرر بدون رقم: ${it.name} (تخطّي للأمان)`);
+      }
+
+      const total = Number(String(it.price).replace(/,/g, "")) || 0;
+      const paid = Number(String(it.paid).replace(/,/g, "")) || 0;
+
+      if (dbId) {
+        plan.students_updated += 1;
+        if (!isDry) {
+          const patch: Record<string, unknown> = { study_type: studyType };
+          if (groupId) patch.group_id = groupId;
+          if (total > 0) patch.total_amount = total;
+          await supabase.from("students").update(patch).eq("id", dbId);
+        }
+        return;
+      }
+
+      // New student.
+      plan.students_new += 1;
+      if (paid > 0) { plan.payments_new += 1; plan.cashbook_new += 1; }
+      if (!isDry) {
+        const { data: ins, error } = await supabase
+          .from("students")
+          .insert({
+            name: it.name.trim(),
+            phone: storePhone(it.phone),
+            study_type: studyType,
+            group_id: groupId,
+            total_amount: total,
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        if (pk) studentByPhone.set(pk, ins.id);
+        if (paid > 0) {
+          const { data: pay } = await supabase
+            .from("payments")
+            .insert({ student_id: ins.id, amount: paid, method, received_by: receiver, payment_date: todayIso(), notes: "مستورد من الشيت" })
+            .select("id")
+            .single();
+          if (pay) {
+            await supabase.from("cash_entries").insert({
+              owner: receiver, entry_type: "in", amount: paid, notes: `دفعة مستوردة — ${it.name.trim()}`,
+              entry_date: todayIso(), linked_payment_id: pay.id, linked_student_id: ins.id,
+            });
+          }
+        }
+      }
+    }
+
+    // Groups + their students.
+    for (const gs of groupSheets) {
+      try {
+        const { items, invalid } = parseStudentSheet(gs.rows, false);
+        plan.invalid_rows += invalid;
+        plan.detected.push({ sheet: gs.name, kind: "جروب", rows: items.length });
+        let groupId = groupByNumber.get(gs.number) ?? null;
+        if (groupId) plan.groups_existing += 1;
+        else {
+          plan.groups_new += 1;
+          if (!isDry) {
+            const { data: g, error } = await supabase
+              .from("groups")
+              .insert({ group_number: gs.number, region: "غير محدد", type: "offline", subscription_type: "monthly", day1: "السبت" })
+              .select("id")
+              .single();
+            if (error) throw error;
+            groupId = g.id;
+            groupByNumber.set(gs.number, g.id);
+          }
+        }
+        for (const it of items) await handleStudent(it, groupId, "offline");
+      } catch (e) {
+        plan.errors.push({ sheet: gs.name, row: 0, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    // Online students (no group).
+    if (onlineSheet) {
+      const { items, invalid } = parseStudentSheet(onlineSheet, true);
+      plan.invalid_rows += invalid;
+      plan.detected.push({ sheet: "online", kind: "أونلاين", rows: items.length });
+      for (const it of items) {
+        try { await handleStudent(it, null, "online"); }
+        catch (e) { plan.errors.push({ sheet: "online", row: 0, error: e instanceof Error ? e.message : String(e) }); }
+      }
+    }
+
+    if (!isDry) {
+      await import("./data").then((m) =>
+        m.addAudit("system", "create", "import", null,
+          `استيراد من الشيت — ${plan.groups_new} جروب جديد، ${plan.students_new} طالب جديد، ${plan.students_updated} محدّث، ${plan.payments_new} دفعة`,
+          { groups_new: plan.groups_new, students_new: plan.students_new, students_updated: plan.students_updated, payments_new: plan.payments_new }),
+      );
+      revalidateAll();
+    } else {
+      await import("./data").then((m) =>
+        m.addAudit("system", "create", "import", null, "تحليل ملف Excel (معاينة قبل الاستيراد)", { detected: plan.detected.length }),
+      ).catch(() => undefined);
+    }
+    return { ok: true, data: plan };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Backups → Supabase Storage (bucket: "backups"). Manual button + cron route.
+// ════════════════════════════════════════════════════════════════════════════
+const BACKUP_BUCKET = "backups";
+
+export async function createBackupAction(): Promise<Result> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const [{ data: students }, { data: groups }, { data: payments }, { data: cash }, { data: audits }] = await Promise.all([
+      supabase.from("students").select("*").order("created_at", { ascending: true }),
+      supabase.from("groups").select("*").order("created_at", { ascending: true }),
+      supabase.from("payments").select("*").order("payment_date", { ascending: true }),
+      supabase.from("cash_entries").select("*").order("entry_date", { ascending: true }),
+      supabase.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(2000),
+    ]);
+    const groupNumberById = new Map((groups ?? []).map((g) => [g.id, g.group_number]));
+
+    const studentRows: (string | number)[][] = [
+      BACKUP_STUDENT_HEADERS,
+      ...(students ?? []).map((s) => [
+        s.id, s.name, s.phone ?? "", s.age ?? "", s.study_type ?? "offline", s.online_type ?? "", s.branch ?? "",
+        s.group_id ? groupNumberById.get(s.group_id) ?? "" : "", Number(s.total_amount ?? 0),
+        Number(s.installments ?? 1), Number(s.installment_amount ?? 0), s.next_due_date ?? "", s.notes ?? "",
+      ]),
+    ];
+    const groupRows: (string | number)[][] = [
+      ["id", "group_number", "region", "type", "subscription_type", "branch", "day1", "start_time1", "end_time1", "day2", "start_time2", "end_time2", "notes"],
+      ...(groups ?? []).map((g) => [
+        g.id, g.group_number, g.region ?? "", g.type ?? "", g.subscription_type ?? "", g.branch ?? "",
+        g.day1 ?? "", g.start_time1 ?? "", g.end_time1 ?? "", g.day2 ?? "", g.start_time2 ?? "", g.end_time2 ?? "", g.notes ?? "",
+      ]),
+    ];
+    const paymentRows: (string | number)[][] = [
+      BACKUP_PAYMENT_HEADERS,
+      ...(payments ?? []).map((p) => [p.id, p.student_id, Number(p.amount), p.method, p.received_by, p.payment_date, p.notes ?? ""]),
+    ];
+    const cashRows: (string | number)[][] = [
+      BACKUP_CASH_HEADERS,
+      ...(cash ?? []).map((c) => [c.id, c.owner, c.entry_type, Number(c.amount), c.entry_date, c.notes ?? "", c.linked_payment_id ?? "", c.linked_student_id ?? ""]),
+    ];
+    const auditRows: (string | number)[][] = [
+      ["id", "actor", "action", "entity", "entity_id", "description", "created_at"],
+      ...(audits ?? []).map((a) => [a.id, a.actor, a.action, a.entity, a.entity_id ?? "", a.description, a.created_at]),
+    ];
+
+    const bytes = await writeXlsxBytes([
+      { name: "Students", rows: studentRows },
+      { name: "Groups", rows: groupRows },
+      { name: "Payments", rows: paymentRows },
+      { name: "Cashbook", rows: cashRows },
+      { name: "AuditLog", rows: auditRows },
+    ]);
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const fname = `codewave-backup-${stamp}.xlsx`;
+
+    const { error } = await supabase.storage
+      .from(BACKUP_BUCKET)
+      .upload(fname, bytes, { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", upsert: false });
+    if (error) throw new Error(`فشل رفع النسخة الاحتياطية: ${error.message} (تأكد من وجود bucket باسم 'backups')`);
+
+    await import("./data").then((m) =>
+      m.addAudit("system", "create", "backup", null, `إنشاء نسخة احتياطية — ${fname}`, {
+        file: fname, students: (students ?? []).length, groups: (groups ?? []).length, payments: (payments ?? []).length,
+      }),
+    ).catch(() => undefined);
+    return { ok: true, data: { name: fname } };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function listBackupsAction(): Promise<Result> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase.storage.from(BACKUP_BUCKET).list("", {
+      limit: 200,
+      sortBy: { column: "name", order: "desc" },
+    });
+    if (error) throw new Error(`${error.message} (تأكد من وجود bucket باسم 'backups')`);
+    const files = (data ?? []).filter((f) => f.name.toLowerCase().endsWith(".xlsx"));
+    const out = [];
+    for (const f of files) {
+      const { data: signed } = await supabase.storage.from(BACKUP_BUCKET).createSignedUrl(f.name, 3600);
+      out.push({
+        name: f.name,
+        size: (f.metadata as { size?: number } | null)?.size ?? 0,
+        created_at: f.created_at ?? null,
+        url: signed?.signedUrl ?? "",
+      });
+    }
+    return { ok: true, data: out };
   } catch (e) {
     return fail(e);
   }

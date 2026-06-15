@@ -3,42 +3,32 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { readXlsx, readAllSheets, writeXlsx } from "@/lib/xlsx";
-import { importRowsAction, importBackupAction, getBackupAction } from "@/lib/actions";
+import { importRowsAction, importBackupAction, importWorkbookAction, getBackupAction } from "@/lib/actions";
 import { toast } from "@/components/toast";
-import { todayIso } from "@/lib/utils";
+import { RECEIVERS, PAYMENT_METHODS } from "@/lib/types";
+import { METHOD_LABELS, todayIso } from "@/lib/utils";
 
 type LegacyResult = { created: number; payments: number; skipped: number; errors: Array<{ row: number; error: string }> };
-type BackupResult = {
-  students_new: number;
-  students_updated: number;
-  payments_new: number;
-  cashbook_new: number;
+type BackupResult = { students_new: number; students_updated: number; payments_new: number; cashbook_new: number; errors: Array<{ sheet: string; row: number; error: string }> };
+type WorkbookPlan = {
+  groups_new: number; groups_existing: number; students_new: number; students_updated: number;
+  payments_new: number; cashbook_new: number; invalid_rows: number; duplicate_warnings: string[];
+  detected: Array<{ sheet: string; kind: string; rows: number }>; manual_review: string[];
   errors: Array<{ sheet: string; row: number; error: string }>;
 };
 type BackupSheets = { students?: string[][]; payments?: string[][]; cashbook?: string[][] };
 
-// Minimal RFC-4180-ish CSV parser (handles quotes, commas, newlines).
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let inQuotes = false;
+  let row: string[] = []; let field = ""; let inQuotes = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ",") {
-      row.push(field); field = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && text[i + 1] === "\n") i++;
-      row.push(field); field = "";
-      if (row.some((v) => v !== "")) rows.push(row);
-      row = [];
-    } else field += c;
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(field); field = ""; if (row.some((v) => v !== "")) rows.push(row); row = []; }
+    else field += c;
   }
   if (field !== "" || row.length) { row.push(field); if (row.some((v) => v !== "")) rows.push(row); }
   return rows;
@@ -54,14 +44,24 @@ function pickSheet(sheets: Record<string, string[][]>, keys: string[]): string[]
 
 export function ImportView() {
   const router = useRouter();
-  const [mode, setMode] = useState<"backup" | "legacy" | "">("");
+  const [mode, setMode] = useState<"backup" | "workbook" | "legacy" | "">("");
   const [legacyRows, setLegacyRows] = useState<string[][]>([]);
   const [backup, setBackup] = useState<BackupSheets>({});
+  const [workbook, setWorkbook] = useState<Record<string, string[][]>>({});
+  const [plan, setPlan] = useState<WorkbookPlan | null>(null);
+  const [imported, setImported] = useState(false);
+  const [recv, setRecv] = useState("محمد");
+  const [method, setMethod] = useState("cash");
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
   const [legacyResult, setLegacyResult] = useState<LegacyResult | null>(null);
   const [backupResult, setBackupResult] = useState<BackupResult | null>(null);
   const [error, setError] = useState("");
+
+  function reset() {
+    setLegacyRows([]); setBackup({}); setWorkbook({}); setPlan(null); setImported(false);
+    setLegacyResult(null); setBackupResult(null); setError("");
+  }
 
   async function exportBackup() {
     setBusy(true);
@@ -76,80 +76,76 @@ export function ImportView() {
       ]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `wave_backup_${todayIso()}.xlsx`;
-      a.click();
+      a.href = url; a.download = `codewave-backup-${todayIso()}.xlsx`; a.click();
       URL.revokeObjectURL(url);
       toast("تم تصدير النسخة الاحتياطية");
     } catch (e) {
       toast(e instanceof Error ? e.message : "فشل التصدير", "error");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   }
 
   async function onFile(file: File) {
-    setError(""); setLegacyResult(null); setBackupResult(null);
-    setLegacyRows([]); setBackup({}); setMode("");
-    setFileName(file.name);
+    reset(); setMode(""); setFileName(file.name);
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     try {
-      if (ext === "csv") {
-        setLegacyRows(parseCsv(await file.text()));
-        setMode("legacy");
-      } else if (ext === "xlsx") {
-        const sheets = await readAllSheets(await file.arrayBuffer());
-        const students = pickSheet(sheets, ["student", "طلا"]);
-        const payments = pickSheet(sheets, ["payment", "دفع"]);
-        const cashbook = pickSheet(sheets, ["cash", "خزين"]);
-        if (students) {
-          setBackup({ students, payments, cashbook });
-          setMode("backup");
-        } else {
-          // Single-sheet student file → legacy importer.
-          setLegacyRows(await readXlsx(await file.arrayBuffer()));
-          setMode("legacy");
-        }
+      if (ext === "csv") { setLegacyRows(parseCsv(await file.text())); setMode("legacy"); return; }
+      if (ext !== "xlsx") { setError("الملف يجب أن يكون بصيغة xlsx أو csv"); return; }
+      const buf = await file.arrayBuffer();
+      const sheets = await readAllSheets(buf);
+      const names = Object.keys(sheets);
+      const isBackup = names.some((n) => ["students", "payments", "cashbook"].includes(n.trim().toLowerCase()));
+      const numeric = names.filter((n) => /^\s*\d+\s*$/.test(n));
+      const hasOnline = names.some((n) => n.toLowerCase().includes("online"));
+      if (isBackup) {
+        setBackup({ students: pickSheet(sheets, ["student"]), payments: pickSheet(sheets, ["payment"]), cashbook: pickSheet(sheets, ["cash"]) });
+        setMode("backup");
+      } else if (numeric.length > 0 || hasOnline) {
+        setWorkbook(sheets); setMode("workbook");
       } else {
-        setError("الملف يجب أن يكون بصيغة xlsx أو csv");
+        setLegacyRows(await readXlsx(buf)); setMode("legacy");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "فشل قراءة الملف");
     }
   }
 
-  async function confirmImport() {
-    setBusy(true);
-    setError("");
+  async function analyzeWorkbook() {
+    setBusy(true); setError(""); setImported(false);
     try {
-      if (mode === "backup") {
+      const res = await importWorkbookAction(workbook, { dryRun: true, defaultReceiver: recv, defaultMethod: method });
+      if (!res.ok) throw new Error(res.error);
+      setPlan(res.data as WorkbookPlan);
+    } catch (e) { setError(e instanceof Error ? e.message : "فشل التحليل"); }
+    finally { setBusy(false); }
+  }
+
+  async function confirmImport() {
+    setBusy(true); setError("");
+    try {
+      if (mode === "workbook") {
+        const res = await importWorkbookAction(workbook, { dryRun: false, defaultReceiver: recv, defaultMethod: method });
+        if (!res.ok) throw new Error(res.error);
+        setPlan(res.data as WorkbookPlan); setImported(true);
+        toast("تم الاستيراد بنجاح"); router.refresh();
+      } else if (mode === "backup") {
         const res = await importBackupAction(backup);
         if (!res.ok) throw new Error(res.error);
-        const data = res.data as BackupResult;
-        setBackupResult(data);
-        toast(`تم: ${data.students_new} جديد، ${data.students_updated} محدّث، ${data.payments_new} دفعة`);
-        router.refresh();
+        setBackupResult(res.data as BackupResult);
+        toast("تم استيراد النسخة الاحتياطية"); router.refresh();
       } else if (mode === "legacy") {
-        if (legacyRows.length < 2) { setError("الملف فارغ أو لا يحتوي على بيانات"); return; }
+        if (legacyRows.length < 2) { setError("الملف فارغ"); return; }
         const res = await importRowsAction(legacyRows);
         if (!res.ok) throw new Error(res.error);
-        const data = res.data as LegacyResult;
-        setLegacyResult(data);
-        toast(`تم استيراد ${data.created} طالب و ${data.payments} دفعة`);
-        router.refresh();
+        setLegacyResult(res.data as LegacyResult);
+        toast("تم الاستيراد"); router.refresh();
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "فشل الاستيراد");
-    } finally {
-      setBusy(false);
-    }
+    } catch (e) { setError(e instanceof Error ? e.message : "فشل الاستيراد"); }
+    finally { setBusy(false); }
   }
 
   const sCount = Math.max((backup.students?.length ?? 1) - 1, 0);
   const pCount = Math.max((backup.payments?.length ?? 1) - 1, 0);
   const cCount = Math.max((backup.cashbook?.length ?? 1) - 1, 0);
-  const studentsHeader = backup.students?.[0] ?? [];
-  const studentsPreview = (backup.students ?? []).slice(1, 6);
   const legacyHeader = legacyRows[0] ?? [];
   const legacyPreview = legacyRows.slice(1, 6);
 
@@ -158,7 +154,7 @@ export function ImportView() {
       <div className="panel">
         <div className="section-title" style={{ marginBottom: 14 }}><span className="dot" /> النسخ الاحتياطي (Excel)</div>
         <p className="muted" style={{ fontSize: ".86rem", marginBottom: 14 }}>
-          صدّر نسخة احتياطية كاملة (الطلاب + الدفعات + الخزينة) في ملف Excel واحد متعدد الصفحات. يمكنك لاحقاً رفع نفس الملف لاستعادة/تحديث البيانات بدون تكرار.
+          صدّر نسخة احتياطية كاملة (الطلاب + الدفعات + الخزينة) في ملف Excel واحد. يمكنك رفع نفس الملف لاحقاً لاستعادة/تحديث البيانات بدون تكرار.
         </p>
         <button className="btn btn-success" onClick={exportBackup} disabled={busy}>تصدير نسخة احتياطية Excel</button>
       </div>
@@ -166,57 +162,96 @@ export function ImportView() {
       <div className="panel">
         <div className="section-title" style={{ marginBottom: 14 }}><span className="dot green" /> استيراد ملف</div>
         <p className="muted" style={{ fontSize: ".86rem", marginBottom: 14 }}>
-          ارفع نسخة احتياطية (Students / Payments / Cashbook) لاستعادتها، أو ملف طلاب مفرد (xlsx/csv). لن يتم حفظ أي شيء قبل تأكيدك.
+          يدعم: ملف الشيت الأصلي (تبويبات الجروبات بالأرقام + online)، أو نسخة احتياطية للنظام، أو ملف طلاب مفرد (xlsx/csv). لن يُحفظ أي شيء قبل تأكيدك.
         </p>
         <input className="form-control" type="file" accept=".xlsx,.csv" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
-        {fileName && <div className="muted" style={{ fontSize: ".82rem", marginTop: 8 }}>الملف: {fileName} {mode === "backup" ? "— نسخة احتياطية" : mode === "legacy" ? "— ملف طلاب" : ""}</div>}
+        {fileName && <div className="muted" style={{ fontSize: ".82rem", marginTop: 8 }}>الملف: {fileName} {mode === "workbook" ? "— ملف الشيت الأصلي" : mode === "backup" ? "— نسخة احتياطية" : mode === "legacy" ? "— ملف طلاب" : ""}</div>}
         {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
 
+        {mode === "workbook" && (
+          <>
+            <div className="form-row" style={{ marginTop: 14 }}>
+              <div className="form-group">
+                <label className="form-label">المدفوعات القديمة تُسجَّل باسم</label>
+                <select className="form-control" value={recv} onChange={(e) => setRecv(e.target.value)}>
+                  {RECEIVERS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">طريقة الدفع للمدفوعات القديمة</label>
+                <select className="form-control" value={method} onChange={(e) => setMethod(e.target.value)}>
+                  {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{METHOD_LABELS[m]}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="btn-group" style={{ marginTop: 6 }}>
+              <button className="btn btn-outline" onClick={analyzeWorkbook} disabled={busy}>{busy ? "..." : "تحليل الملف (معاينة)"}</button>
+              {plan && !imported && <button className="btn btn-primary" onClick={confirmImport} disabled={busy}>تأكيد الاستيراد</button>}
+            </div>
+          </>
+        )}
         {mode === "backup" && (
           <>
             <div className="stats-grid" style={{ marginTop: 14 }}>
               <div className="stat-card blue"><div className="card-label">طلاب في الملف</div><div className="card-value">{sCount}</div></div>
-              <div className="stat-card green"><div className="card-label">دفعات في الملف</div><div className="card-value">{pCount}</div></div>
+              <div className="stat-card green"><div className="card-label">دفعات</div><div className="card-value">{pCount}</div></div>
               <div className="stat-card yellow"><div className="card-label">حركات خزينة</div><div className="card-value">{cCount}</div></div>
             </div>
-            <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={confirmImport} disabled={busy}>
-              {busy ? "جاري الاستيراد..." : "تأكيد الاستيراد"}
-            </button>
+            <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={confirmImport} disabled={busy}>{busy ? "جاري..." : "تأكيد الاستيراد"}</button>
           </>
         )}
         {mode === "legacy" && legacyRows.length > 1 && (
-          <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={confirmImport} disabled={busy}>
-            {busy ? "جاري الاستيراد..." : `تأكيد استيراد ${legacyRows.length - 1} صف`}
-          </button>
+          <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={confirmImport} disabled={busy}>{busy ? "جاري..." : `تأكيد استيراد ${legacyRows.length - 1} صف`}</button>
         )}
       </div>
 
-      {mode === "backup" && studentsPreview.length > 0 && (
-        <>
-          <div className="section-title" style={{ marginBottom: 10 }}><span className="dot green" /> معاينة الطلاب (أول 5)</div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr>{studentsHeader.map((h, i) => <th key={i}>{h || `عمود ${i + 1}`}</th>)}</tr></thead>
-              <tbody>
-                {studentsPreview.map((r, i) => (
-                  <tr key={i}>{studentsHeader.map((_, c) => <td key={c} className="muted">{r[c] ?? ""}</td>)}</tr>
-                ))}
-              </tbody>
-            </table>
+      {mode === "workbook" && plan && (
+        <div className="panel">
+          <div className="section-title" style={{ marginBottom: 14 }}>
+            <span className="dot green" /> {imported ? "نتيجة الاستيراد" : "معاينة قبل الاستيراد"}
           </div>
-        </>
+          <div className="stats-grid">
+            <div className="stat-card blue"><div className="card-label">جروبات جديدة</div><div className="card-value">{plan.groups_new}</div></div>
+            <div className="stat-card green"><div className="card-label">طلاب جدد</div><div className="card-value">{plan.students_new}</div></div>
+            <div className="stat-card blue"><div className="card-label">طلاب محدّثون</div><div className="card-value">{plan.students_updated}</div></div>
+            <div className="stat-card green"><div className="card-label">دفعات جديدة</div><div className="card-value">{plan.payments_new}</div></div>
+            <div className="stat-card yellow"><div className="card-label">حركات خزينة</div><div className="card-value">{plan.cashbook_new}</div></div>
+            <div className="stat-card red"><div className="card-label">صفوف غير صالحة</div><div className="card-value">{plan.invalid_rows}</div></div>
+          </div>
+          {plan.detected.length > 0 && (
+            <div className="table-wrap" style={{ marginTop: 6 }}>
+              <table>
+                <thead><tr><th>التبويب</th><th>النوع</th><th>عدد الصفوف الصالحة</th></tr></thead>
+                <tbody>{plan.detected.map((d, i) => <tr key={i}><td>{d.sheet}</td><td className="muted">{d.kind}</td><td>{d.rows}</td></tr>)}</tbody>
+              </table>
+            </div>
+          )}
+          {plan.manual_review.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted" style={{ marginBottom: 6 }}>تحتاج مراجعة يدوية:</div>
+              {plan.manual_review.map((w, i) => <div key={i} className="badge yellow" style={{ display: "block", marginBottom: 4, padding: "6px 10px" }}>{w}</div>)}
+            </div>
+          )}
+          {plan.duplicate_warnings.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted" style={{ marginBottom: 6 }}>تحذيرات تكرار ({plan.duplicate_warnings.length}):</div>
+              {plan.duplicate_warnings.slice(0, 12).map((w, i) => <div key={i} className="muted" style={{ fontSize: ".8rem" }}>• {w}</div>)}
+            </div>
+          )}
+          {plan.errors.length > 0 && (
+            <div style={{ marginTop: 8 }}>{plan.errors.slice(0, 12).map((er, i) => <div key={i} className="form-error">{er.sheet}: {er.error}</div>)}</div>
+          )}
+          {!imported && <p className="muted" style={{ fontSize: ".82rem", marginTop: 12 }}>راجع الأرقام أعلاه ثم اضغط «تأكيد الاستيراد» للحفظ.</p>}
+        </div>
       )}
-      {mode === "legacy" && legacyPreview.length > 0 && (
+
+      {mode === "legacy" && legacyPreview.length > 0 && !legacyResult && (
         <>
           <div className="section-title" style={{ marginBottom: 10 }}><span className="dot green" /> معاينة (أول 5 صفوف)</div>
           <div className="table-wrap">
             <table>
               <thead><tr>{legacyHeader.map((h, i) => <th key={i}>{h || `عمود ${i + 1}`}</th>)}</tr></thead>
-              <tbody>
-                {legacyPreview.map((r, i) => (
-                  <tr key={i}>{legacyHeader.map((_, c) => <td key={c} className="muted">{r[c] ?? ""}</td>)}</tr>
-                ))}
-              </tbody>
+              <tbody>{legacyPreview.map((r, i) => <tr key={i}>{legacyHeader.map((_, c) => <td key={c} className="muted">{r[c] ?? ""}</td>)}</tr>)}</tbody>
             </table>
           </div>
         </>
@@ -229,16 +264,9 @@ export function ImportView() {
             <div className="stat-card green"><div className="card-label">طلاب جدد</div><div className="card-value">{backupResult.students_new}</div></div>
             <div className="stat-card blue"><div className="card-label">طلاب محدّثون</div><div className="card-value">{backupResult.students_updated}</div></div>
             <div className="stat-card green"><div className="card-label">دفعات جديدة</div><div className="card-value">{backupResult.payments_new}</div></div>
-            <div className="stat-card yellow"><div className="card-label">حركات خزينة جديدة</div><div className="card-value">{backupResult.cashbook_new}</div></div>
+            <div className="stat-card yellow"><div className="card-label">حركات خزينة</div><div className="card-value">{backupResult.cashbook_new}</div></div>
           </div>
-          {backupResult.errors.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div className="muted" style={{ marginBottom: 6 }}>أخطاء ({backupResult.errors.length}):</div>
-              {backupResult.errors.slice(0, 20).map((er, i) => (
-                <div key={i} className="form-error">{er.sheet} صف {er.row}: {er.error}</div>
-              ))}
-            </div>
-          )}
+          {backupResult.errors.length > 0 && <div style={{ marginTop: 8 }}>{backupResult.errors.slice(0, 20).map((er, i) => <div key={i} className="form-error">{er.sheet} صف {er.row}: {er.error}</div>)}</div>}
         </div>
       )}
       {legacyResult && (
@@ -246,17 +274,10 @@ export function ImportView() {
           <div className="section-title" style={{ marginBottom: 14 }}><span className="dot green" /> نتيجة الاستيراد</div>
           <div className="stats-grid">
             <div className="stat-card green"><div className="card-label">طلاب أُضيفوا</div><div className="card-value">{legacyResult.created}</div></div>
-            <div className="stat-card blue"><div className="card-label">دفعات أُضيفت</div><div className="card-value">{legacyResult.payments}</div></div>
-            <div className="stat-card yellow"><div className="card-label">صفوف متخطّاة</div><div className="card-value">{legacyResult.skipped}</div></div>
+            <div className="stat-card blue"><div className="card-label">دفعات</div><div className="card-value">{legacyResult.payments}</div></div>
+            <div className="stat-card yellow"><div className="card-label">متخطّاة</div><div className="card-value">{legacyResult.skipped}</div></div>
           </div>
-          {legacyResult.errors.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div className="muted" style={{ marginBottom: 6 }}>أخطاء:</div>
-              {legacyResult.errors.slice(0, 20).map((er, i) => (
-                <div key={i} className="form-error">صف {er.row}: {er.error}</div>
-              ))}
-            </div>
-          )}
+          {legacyResult.errors.length > 0 && <div style={{ marginTop: 8 }}>{legacyResult.errors.slice(0, 20).map((er, i) => <div key={i} className="form-error">صف {er.row}: {er.error}</div>)}</div>}
         </div>
       )}
     </>

@@ -26,6 +26,7 @@ const SECTIONS: NavSection[] = [
       { href: "/reports", label: "التقارير", icon: "📈" },
       { href: "/import", label: "استيراد Excel", icon: "📥" },
       { href: "/auditlog", label: "سجل العمليات", icon: "📋" },
+      { href: "/backups", label: "النسخ الاحتياطية", icon: "🗂️" },
     ],
   },
 ];

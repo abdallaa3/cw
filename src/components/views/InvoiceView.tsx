@@ -4,11 +4,12 @@ import { useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import type { Student } from "@/lib/types";
-import { methodLabel } from "@/lib/utils";
+import { methodLabel, STUDY_TYPE_LABELS, ONLINE_TYPE_LABELS } from "@/lib/utils";
 
 function fmtDate(d: string | null | undefined) {
   if (!d) return "—";
   const dt = new Date(`${d}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return d;
   return `${dt.getDate()}/${dt.getMonth() + 1}/${dt.getFullYear()}`;
 }
 const fmtMoney = (n: number) => Number(n || 0).toLocaleString("en-US");
@@ -20,6 +21,7 @@ export function InvoiceView({ student }: { student: Student }) {
   const invNo = `INV-${student.id.slice(0, 8).toUpperCase()}`;
   const today = new Date();
   const todayFmt = `${today.getDate()}/${today.getMonth() + 1}/${today.getFullYear()}`;
+  const studyLabel = STUDY_TYPE_LABELS[student.study_type] ?? student.study_type ?? "—";
 
   async function savePDF() {
     const el = invoiceRef.current;
@@ -66,19 +68,24 @@ export function InvoiceView({ student }: { student: Student }) {
           <hr className="inv-hr" />
           <div className="inv-info">
             <div className="info-row"><span className="info-label">اسم الطالب:</span><span className="info-val">{student.name}</span></div>
-            <div className="info-row"><span className="info-label">اسم الفرع:</span><span className="info-val">{student.region || "—"}</span></div>
             <div className="info-row"><span className="info-label">رقم التليفون:</span><span className="info-val">{student.phone || "—"}</span></div>
-            <div className="info-row"><span className="info-label">أسم التراك:</span><span className="info-val">{student.group_number || "—"}</span></div>
+            <div className="info-row"><span className="info-label">السن:</span><span className="info-val">{student.age ?? "—"}</span></div>
+            <div className="info-row"><span className="info-label">نوع الدراسة:</span><span className="info-val">{studyLabel}{student.study_type === "online" && student.online_type ? ` — ${ONLINE_TYPE_LABELS[student.online_type] ?? ""}` : ""}</span></div>
+            {student.study_type === "offline" ? (
+              <div className="info-row"><span className="info-label">الفرع:</span><span className="info-val">{student.branch || student.region || "—"}</span></div>
+            ) : null}
+            <div className="info-row"><span className="info-label">الجروب:</span><span className="info-val">{student.group_number || "بدون جروب"}</span></div>
+            <div className="info-row"><span className="info-label">تاريخ استحقاق القسط القادم:</span><span className="info-val">{fmtDate(student.next_due_date)}</span></div>
           </div>
           <table className="inv-table">
             <thead>
               <tr>
-                <th>القسط</th><th>التاريخ</th><th>الطريقة</th><th>المبلغ</th><th>المتبقي</th>
+                <th>القسط</th><th>التاريخ</th><th>الطريقة</th><th>المستلم</th><th>ملاحظات</th><th>المبلغ</th><th>المتبقي</th>
               </tr>
             </thead>
             <tbody>
               {payments.length === 0 ? (
-                <tr><td colSpan={5} style={{ textAlign: "center", color: "#9ca3af", padding: 16 }}>لا توجد دفعات مسجلة</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: "center", color: "#9ca3af", padding: 16 }}>لا توجد دفعات مسجلة</td></tr>
               ) : (
                 payments.map((p, i) => {
                   runRemain -= p.amount;
@@ -87,6 +94,8 @@ export function InvoiceView({ student }: { student: Student }) {
                       <td>قسط {i + 1}</td>
                       <td>{fmtDate(p.payment_date)}</td>
                       <td>{methodLabel(p.method)}</td>
+                      <td>{p.received_by}</td>
+                      <td style={{ color: "#6b7280" }}>{p.notes || "—"}</td>
                       <td style={{ fontWeight: 700, color: "#16a34a" }}>{fmtMoney(p.amount)}</td>
                       <td style={{ fontWeight: 700, color: runRemain > 0 ? "#dc2626" : "#16a34a" }}>{fmtMoney(runRemain)}</td>
                     </tr>
@@ -100,7 +109,7 @@ export function InvoiceView({ student }: { student: Student }) {
             <div className="tot-row"><span>المدفوع</span><span style={{ color: "#16a34a" }}>{fmtMoney(student.paid_amount)} ج</span></div>
             <div className="tot-row grand"><span>المتبقي</span><span style={{ color: student.remaining_amount > 0 ? "#dc2626" : "#16a34a" }}>{fmtMoney(student.remaining_amount)} ج</span></div>
           </div>
-          <div className="inv-footer">شكراً لتعاملكم مع Wave Academy</div>
+          <div className="inv-footer">شكراً لتعاملكم مع Code Wave Academy</div>
         </div>
       </div>
     </div>

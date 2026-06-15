@@ -235,3 +235,11 @@ export async function readAllSheets(input: ArrayBuffer | Uint8Array): Promise<Re
   }
   return out;
 }
+
+/** Server-friendly variant of writeXlsx: returns raw bytes (for Storage upload). */
+export async function writeXlsxBytes(sheets: SheetData[]): Promise<Uint8Array> {
+  const blob = await writeXlsx(sheets);
+  // In Node/edge runtimes Blob supports arrayBuffer(); convert to bytes for upload.
+  const buf = await blob.arrayBuffer();
+  return new Uint8Array(buf);
+}

@@ -12,6 +12,7 @@ const PROTECTED = [
   "/import",
   "/reports",
   "/invoice",
+  "/backups",
 ];
 
 const COOKIE_NAME = "code_wave_admin";
@@ -72,5 +73,6 @@ export const config = {
     "/import/:path*",
     "/reports/:path*",
     "/invoice/:path*",
+    "/backups/:path*",
   ],
 };
