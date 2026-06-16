@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/EmptyState";
 import type { AuditLog } from "@/lib/types";
 import { ACTION_LABELS, ENTITY_LABELS, formatDate } from "@/lib/utils";
 
+// "renew" has no modifier — the base .badge class is already accent-blue.
 const ACTION_COLOR: Record<string, string> = { create: "green", update: "yellow", delete: "red" };
 
 export function AuditLogView({ logs }: { logs: AuditLog[] }) {
@@ -39,6 +40,7 @@ export function AuditLogView({ logs }: { logs: AuditLog[] }) {
           <option value="create">إضافة</option>
           <option value="update">تعديل</option>
           <option value="delete">حذف</option>
+          <option value="renew">تجديد اشتراك</option>
         </select>
         <select className="field" value={entity} onChange={(e) => setEntity(e.target.value)}>
           <option value="">كل الأنواع</option>

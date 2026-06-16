@@ -2,7 +2,6 @@
 
 import { useRef } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import type { Student } from "@/lib/types";
 import { methodLabel, STUDY_TYPE_LABELS, ONLINE_TYPE_LABELS } from "@/lib/utils";
 
@@ -62,7 +61,8 @@ export function InvoiceView({ student }: { student: Student }) {
               <div style={{ fontSize: ".8rem", color: "#9ca3af", marginTop: 2 }}>{invNo} &nbsp;|&nbsp; {todayFmt}</div>
             </div>
             <div className="inv-logo">
-              <Image src="/codewave-logo.png" alt="Code Wave" width={64} height={64} />
+              {/* Plain <img> instead of next/image — avoids print/PDF cropping issues */}
+              <img src="/codewave-logo.png" alt="Code Wave" className="invoice-logo" />
             </div>
           </div>
           <hr className="inv-hr" />
@@ -80,12 +80,12 @@ export function InvoiceView({ student }: { student: Student }) {
           <table className="inv-table">
             <thead>
               <tr>
-                <th>القسط</th><th>التاريخ</th><th>الطريقة</th><th>المستلم</th><th>ملاحظات</th><th>المبلغ</th><th>المتبقي</th>
+                <th>القسط</th><th>التاريخ</th><th>الطريقة</th><th>ملاحظات</th><th>المبلغ</th><th>المتبقي</th>
               </tr>
             </thead>
             <tbody>
               {payments.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: "center", color: "#9ca3af", padding: 16 }}>لا توجد دفعات مسجلة</td></tr>
+                <tr><td colSpan={6} style={{ textAlign: "center", color: "#9ca3af", padding: 16 }}>لا توجد دفعات مسجلة</td></tr>
               ) : (
                 payments.map((p, i) => {
                   runRemain -= p.amount;
@@ -94,7 +94,6 @@ export function InvoiceView({ student }: { student: Student }) {
                       <td>قسط {i + 1}</td>
                       <td>{fmtDate(p.payment_date)}</td>
                       <td>{methodLabel(p.method)}</td>
-                      <td>{p.received_by}</td>
                       <td style={{ color: "#6b7280" }}>{p.notes || "—"}</td>
                       <td style={{ fontWeight: 700, color: "#16a34a" }}>{fmtMoney(p.amount)}</td>
                       <td style={{ fontWeight: 700, color: runRemain > 0 ? "#dc2626" : "#16a34a" }}>{fmtMoney(runRemain)}</td>

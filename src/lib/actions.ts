@@ -13,6 +13,7 @@ import {
   deleteGroup,
   deletePayment,
   deleteStudent,
+  renewStudent,
   updateCashEntry,
   updateGroup,
   updatePayment,
@@ -77,6 +78,18 @@ export async function deleteStudentAction(id: string): Promise<Result> {
     await deleteStudent(id);
     revalidateAll();
     return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// Renew subscription: archives the old student and creates a new one. Never
+// deletes/mutates old payments, old cashbook entries, or receiver balances.
+export async function renewStudentAction(oldStudentId: string, payload: Record<string, unknown>): Promise<Result> {
+  try {
+    const data = await renewStudent(oldStudentId, payload);
+    revalidateAll();
+    return { ok: true, data };
   } catch (e) {
     return fail(e);
   }

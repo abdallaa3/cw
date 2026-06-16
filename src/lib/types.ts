@@ -82,7 +82,15 @@ export type Student = {
   paid_amount: number;
   remaining_amount: number;
   payments?: Payment[];
+  // Renewal / archive (see migration 0007) — archived_at set ⇒ this is an old,
+  // renewed-from record kept only for history; never deleted.
+  archived_at: string | null;
+  archive_reason: string | null;
+  renewed_to_student_id: string | null;
+  renewed_from_student_id: string | null;
 };
+
+export type StudentStatusFilter = "active" | "archived" | "all";
 
 export type Payment = {
   id: string;

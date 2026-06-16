@@ -794,10 +794,20 @@ select.field {
   font-weight: 800;
   color: #111827;
 }
-.inv-logo img {
-  width: 64px;
-  height: 64px;
+.inv-logo {
+  /* No overflow:hidden here — keeps the logo from being clipped in print/PDF */
+  flex-shrink: 0;
+}
+.invoice-logo {
+  width: 90px;
+  height: 90px;
   object-fit: contain;
+  display: block;
+  background: #fff;
+  border-radius: 12px;
+  padding: 6px;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }
 .inv-hr {
   border: none;
@@ -868,6 +878,8 @@ select.field {
 @media print {
   body {
     background: #fff;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
   .shell .sidebar,
   .shell .header {
@@ -881,6 +893,10 @@ select.field {
   }
   .invoice-page {
     padding: 0;
+  }
+  .invoice-logo {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 }
 

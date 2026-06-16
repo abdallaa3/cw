@@ -7,10 +7,11 @@ import { Modal } from "@/components/Modal";
 import { EmptyState } from "@/components/EmptyState";
 import { PaymentForm } from "@/components/PaymentForm";
 import { AdjustmentForm } from "@/components/AdjustmentForm";
+import { RenewStudentForm } from "@/components/RenewStudentForm";
 import { toast } from "@/components/toast";
 import { saveStudentAction, deleteStudentAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
-import { PAYMENT_METHODS, RECEIVERS, type Group, type Student } from "@/lib/types";
+import { PAYMENT_METHODS, RECEIVERS, type Group, type Student, type StudentStatusFilter } from "@/lib/types";
 import { egp, formatDate, METHOD_LABELS, STUDY_TYPE_LABELS, ONLINE_TYPE_LABELS, todayIso } from "@/lib/utils";
 import { writeXlsx } from "@/lib/xlsx";
 
@@ -63,6 +64,7 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
   const [search, setSearch] = useState("");
   const [groupId, setGroupId] = useState("");
   const [filter, setFilter] = useState(""); // "" | no_group | online | offline | owed
+  const [statusFilter, setStatusFilter] = useState<StudentStatusFilter>("active");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
@@ -70,12 +72,20 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
   const [saving, setSaving] = useState(false);
   const [payFor, setPayFor] = useState<Student | null>(null);
   const [adjFor, setAdjFor] = useState<{ id: string; name: string } | null>(null);
+  const [renewFor, setRenewFor] = useState<Student | null>(null);
 
-  const studentOptions = useMemo(() => students.map((s) => ({ id: s.id, name: s.name })), [students]);
+  // "students" includes both active and archived rows — filtered client-side
+  // so switching Active/Archived/All never needs a re-fetch.
+  const studentOptions = useMemo(
+    () => students.filter((s) => !s.archived_at).map((s) => ({ id: s.id, name: s.name })),
+    [students],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return students.filter((s) => {
+      if (statusFilter === "active" && s.archived_at) return false;
+      if (statusFilter === "archived" && !s.archived_at) return false;
       if (groupId && s.group_id !== groupId) return false;
       if (filter === "no_group" && s.group_id) return false;
       if (filter === "online" && s.study_type !== "online") return false;
@@ -84,7 +94,7 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
       if (q && !(s.name.toLowerCase().includes(q) || (s.phone ?? "").includes(q))) return false;
       return true;
     });
-  }, [students, search, groupId, filter]);
+  }, [students, search, groupId, filter, statusFilter]);
 
   // Students with no group first, to make them easy to spot.
   const ordered = useMemo(
@@ -213,6 +223,11 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
           <option value="offline">حضوري</option>
           <option value="owed">عليهم فلوس</option>
         </select>
+        <select className="field" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StudentStatusFilter)}>
+          <option value="active">نشط</option>
+          <option value="archived">مؤرشف (تم تجديده)</option>
+          <option value="all">الكل (نشط + مؤرشف)</option>
+        </select>
         <div className="spacer" />
         <span className="badge">{ordered.length} طالب</span>
         <button className="btn btn-success" onClick={exportStudents}>📥 تصدير</button>
@@ -247,13 +262,26 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
                     {egp(s.remaining_amount)}
                     {s.remaining_amount > 0 && s.next_due_date ? <span className="muted" style={{ fontSize: ".72rem", display: "block" }}>استحقاق {formatDate(s.next_due_date)}</span> : null}
                   </td>
-                  <td>{statusBadge(s)}</td>
+                  <td>
+                    {s.archived_at ? <span className="badge" style={{ opacity: .8 }}>مؤرشف — تم التجديد</span> : statusBadge(s)}
+                  </td>
                   <td style={{ whiteSpace: "nowrap" }}>
-                    <button className="btn btn-success btn-sm" onClick={() => setPayFor(s)}>دفع</button>{" "}
-                    <button className="btn btn-outline btn-sm" onClick={() => setAdjFor({ id: s.id, name: s.name })}>خصم / استرداد</button>{" "}
-                    <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>{" "}
-                    <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}>تعديل</button>{" "}
-                    <button className="btn btn-danger btn-sm" onClick={() => remove(s)}>حذف</button>
+                    {s.archived_at ? (
+                      <>
+                        <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>{" "}
+                        <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}>تعديل</button>{" "}
+                        <button className="btn btn-danger btn-sm" onClick={() => remove(s)}>حذف</button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="btn btn-success btn-sm" onClick={() => setPayFor(s)}>دفع</button>{" "}
+                        <button className="btn btn-outline btn-sm" onClick={() => setAdjFor({ id: s.id, name: s.name })}>خصم / استرداد</button>{" "}
+                        <button className="btn btn-outline btn-sm" onClick={() => setRenewFor(s)}>تجديد الاشتراك</button>{" "}
+                        <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>{" "}
+                        <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}>تعديل</button>{" "}
+                        <button className="btn btn-danger btn-sm" onClick={() => remove(s)}>حذف</button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -371,6 +399,10 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
 
       {adjFor && (
         <AdjustmentForm student={adjFor} onClose={() => setAdjFor(null)} />
+      )}
+
+      {renewFor && (
+        <RenewStudentForm student={renewFor} groups={groups} onClose={() => setRenewFor(null)} />
       )}
     </>
   );

@@ -14,6 +14,7 @@ import type {
   Payment,
   Receiver,
   Student,
+  StudentStatusFilter,
   TodayGroup,
   TransactionType,
 } from "./types";
@@ -149,6 +150,9 @@ export async function listStudents(filters: {
   group_id?: string;
   search?: string;
   paid?: "yes" | "no";
+  // Archive/renewal status (migration 0007). Omit to get every row, exactly
+  // like before this field existed — existing callers are unaffected.
+  status?: StudentStatusFilter;
 } = {}): Promise<Student[]> {
   const supabase = getSupabaseAdmin();
   let query = supabase.from("students").select("*").order("created_at", { ascending: false });
@@ -157,6 +161,8 @@ export async function listStudents(filters: {
     const s = filters.search.trim();
     query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%`);
   }
+  if (filters.status === "active") query = query.is("archived_at", null);
+  else if (filters.status === "archived") query = query.not("archived_at", "is", null);
   const { data: students, error } = await query;
   if (error) throw error;
 
@@ -279,6 +285,92 @@ export async function updateStudent(id: string, payload: Record<string, unknown>
   if (error) throw error;
   await addAudit("system", "update", "student", id, `تعديل بيانات الطالب — ${data.name}`, patch);
   return data as Student;
+}
+
+// Renew a subscription: ARCHIVE the old student in place (never delete) and
+// create a brand-new student row for the new course/term. Old payments, old
+// cashbook entries and receiver balances are never touched — only the new
+// first payment (if any) creates a new payment + cashbook entry, which only
+// increases (never decreases) the chosen receiver's balance.
+export async function renewStudent(oldId: string, payload: Record<string, unknown>) {
+  const supabase = getSupabaseAdmin();
+  const { data: old, error: oldErr } = await supabase.from("students").select("*").eq("id", oldId).single();
+  if (oldErr || !old) throw new Error("الطالب غير موجود");
+  if (old.archived_at) throw new Error("هذا الطالب مؤرشف بالفعل ولا يمكن تجديده مرة أخرى");
+
+  const newTotal = Number(payload.total_amount ?? 0);
+  if (!(newTotal > 0)) throw new Error("سعر الكورس الجديد مطلوب");
+
+  const firstAmount = Number(payload.first_payment_amount ?? 0);
+  const receiver = String(payload.received_by ?? "") as Receiver;
+  const method = String(payload.method ?? "cash");
+  if (firstAmount > 0 && !RECEIVERS.includes(receiver)) {
+    throw new Error("اختر مستلم الدفعة الأولى (محمد أو عبدالله)");
+  }
+
+  // New group defaults to the old student's group unless explicitly overridden.
+  const groupId = "group_id" in payload ? String(payload.group_id ?? "") || null : (old.group_id ?? null);
+
+  const newRow = {
+    name: old.name,
+    phone: old.phone,
+    age: old.age,
+    study_type: old.study_type,
+    online_type: old.online_type,
+    branch: old.branch,
+    group_id: groupId,
+    total_amount: newTotal,
+    installments: 1,
+    installment_amount: 0,
+    next_due_date: optText(payload.next_due_date),
+    notes: optText(payload.notes),
+    renewed_from_student_id: old.id,
+  };
+  const { data: created, error: createErr } = await supabase.from("students").insert(newRow).select("*").single();
+  if (createErr) throw createErr;
+
+  // Archive the old row — never deleted, just flagged + linked to the new one.
+  const { error: archiveErr } = await supabase
+    .from("students")
+    .update({
+      archived_at: new Date().toISOString(),
+      archive_reason: "renewed",
+      renewed_to_student_id: created.id,
+    })
+    .eq("id", old.id);
+  if (archiveErr) throw archiveErr;
+
+  // First payment for the NEW student only — reuses createPayment so the
+  // cashbook entry + its own audit log entry are created consistently with
+  // every other payment in the system. The old student's balances/payments
+  // are completely untouched.
+  if (firstAmount > 0) {
+    await createPayment({
+      student_id: created.id,
+      amount: firstAmount,
+      method,
+      received_by: receiver,
+      payment_date: String(payload.payment_date || todayIso()),
+      notes: "دفعة أولى عند تجديد الاشتراك",
+    });
+  }
+
+  await addAudit(
+    receiver || "system",
+    "renew",
+    "student",
+    created.id,
+    `تجديد اشتراك — ${old.name}: من ${old.total_amount} ج إلى ${newTotal} ج (طالب جديد)`,
+    {
+      old_student_id: old.id,
+      new_student_id: created.id,
+      old_total_amount: old.total_amount,
+      new_total_amount: newTotal,
+      first_payment_amount: firstAmount,
+    },
+  );
+
+  return { oldStudent: old as Student, newStudent: created as Student };
 }
 
 export async function deleteStudent(id: string) {
@@ -627,16 +719,26 @@ export async function getDashboard(): Promise<DashboardData> {
     paidByStudent.set(p.student_id, (paidByStudent.get(p.student_id) ?? 0) + signed);
   }
 
-  const total_collected = (payments ?? []).reduce(
-    (sum, p) => sum + signedPaymentAmount(Number(p.amount), p.transaction_type, p.direction),
-    0,
-  );
-  const total_expected = (students ?? []).reduce((sum, s) => sum + Number(s.total_amount ?? 0), 0);
-  const total_students = (students ?? []).length;
+  // Renewed/archived students are kept for history but excluded from every
+  // "current state" balance below (expected/remaining/counts/groups/owed) so
+  // a renewal never inflates totals. Money already collected (total_collected,
+  // cash balances, receiver/method summaries) always comes straight from the
+  // payments/cash_entries tables below and is NEVER filtered by archive status.
+  const activeStudents = (students ?? []).filter((s) => !s.archived_at);
+
+  // total_collected/expected/remaining are paired student-balance figures, so
+  // all three are scoped to active students only (an archived student's old
+  // balance is settled history, not part of the current outstanding picture).
+  // This is distinct from cash_balances / receivers_summary / methods_summary
+  // below, which stay global — that money was genuinely received and must
+  // never appear to shrink just because a student was archived on renewal.
+  const total_collected = activeStudents.reduce((sum, s) => sum + (paidByStudent.get(s.id) ?? 0), 0);
+  const total_expected = activeStudents.reduce((sum, s) => sum + Number(s.total_amount ?? 0), 0);
+  const total_students = activeStudents.length;
 
   let paid_students_count = 0;
   let not_paid_students_count = 0;
-  for (const s of students ?? []) {
+  for (const s of activeStudents) {
     const remaining = Number(s.total_amount ?? 0) - (paidByStudent.get(s.id) ?? 0);
     if (remaining <= 0) paid_students_count += 1;
     else not_paid_students_count += 1;
@@ -659,7 +761,7 @@ export async function getDashboard(): Promise<DashboardData> {
   }
 
   const studentsByGroup = new Map<string, Array<Record<string, unknown>>>();
-  for (const s of students ?? []) {
+  for (const s of activeStudents) {
     if (!s.group_id) continue;
     const arr = studentsByGroup.get(s.group_id) ?? [];
     arr.push(s);
@@ -706,7 +808,7 @@ export async function getDashboard(): Promise<DashboardData> {
   const weekday = todayWeekday();
   const today_schedule: TodayGroup[] = [];
   const groupStudentCount = new Map<string, number>();
-  for (const s of students ?? []) {
+  for (const s of activeStudents) {
     if (s.group_id) groupStudentCount.set(s.group_id, (groupStudentCount.get(s.group_id) ?? 0) + 1);
   }
   for (const g of groups ?? []) {
@@ -728,7 +830,7 @@ export async function getDashboard(): Promise<DashboardData> {
   today_schedule.sort((a, b) => String(a.start_time ?? "").localeCompare(String(b.start_time ?? "")));
 
   // Students who still owe money (remaining > 0).
-  const owed_students: OwedStudent[] = (students ?? [])
+  const owed_students: OwedStudent[] = activeStudents
     .map((s) => ({
       id: s.id,
       name: s.name,
@@ -746,7 +848,7 @@ export async function getDashboard(): Promise<DashboardData> {
     });
 
   // Students with no group.
-  const no_group_students: NoGroupStudent[] = (students ?? [])
+  const no_group_students: NoGroupStudent[] = activeStudents
     .filter((s) => !s.group_id)
     .map((s) => ({
       id: s.id,

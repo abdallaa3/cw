@@ -109,6 +109,7 @@ export const ACTION_LABELS: Record<string, string> = {
   create: "إضافة",
   update: "تعديل",
   delete: "حذف",
+  renew: "تجديد اشتراك",
 };
 
 export const ENTITY_LABELS: Record<string, string> = {
