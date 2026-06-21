@@ -874,6 +874,29 @@ select.field {
   font-size: 0.82rem;
   margin-top: 28px;
 }
+.invoice-terms {
+  margin-top: 20px;
+  padding: 10px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+.invoice-terms-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+.invoice-terms-list {
+  margin: 0;
+  padding-right: 18px;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+.invoice-terms-list li {
+  margin-bottom: 2px;
+}
 
 @media print {
   body {
@@ -895,6 +918,11 @@ select.field {
     padding: 0;
   }
   .invoice-logo {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .invoice-terms {
+    break-inside: avoid;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }

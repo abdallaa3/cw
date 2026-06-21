@@ -108,6 +108,14 @@ export function InvoiceView({ student }: { student: Student }) {
             <div className="tot-row"><span>المدفوع</span><span style={{ color: "#16a34a" }}>{fmtMoney(student.paid_amount)} ج</span></div>
             <div className="tot-row grand"><span>المتبقي</span><span style={{ color: student.remaining_amount > 0 ? "#dc2626" : "#16a34a" }}>{fmtMoney(student.remaining_amount)} ج</span></div>
           </div>
+          <div className="invoice-terms" dir="rtl">
+            <div className="invoice-terms-title">الشروط والأحكام:</div>
+            <ul className="invoice-terms-list">
+              <li>في حالة غياب الطالب عن 3 محاضرات دون إخطار مسبق للإدارة، يحق للأكاديمية إيقاف أو إلغاء الاشتراك وفقًا لسياسة الحضور.</li>
+              <li>المبالغ المدفوعة غير قابلة للاسترداد بعد بدء الكورس فعليًا.</li>
+              <li>بسداد الدفعة، يقر ولي الأمر بالموافقة على سياسة الحضور والاسترداد الخاصة بالأكاديمية.</li>
+            </ul>
+          </div>
           <div className="inv-footer">شكراً لتعاملكم مع Code Wave Academy</div>
         </div>
       </div>
