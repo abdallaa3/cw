@@ -578,6 +578,55 @@ select.field {
   color: var(--accent2);
 }
 
+/* Compact balance chips — used on Students/Payments headers so the page
+   doesn't need the full Cashbook receiver-card layout. */
+.balance-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.balance-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+}
+.balance-chip .lbl {
+  color: var(--text2);
+  font-size: 0.78rem;
+}
+.balance-chip .val {
+  font-weight: 700;
+}
+.balance-chip.m {
+  border-color: rgba(88, 166, 255, 0.4);
+}
+.balance-chip.m .val {
+  color: var(--accent);
+}
+.balance-chip.a {
+  border-color: rgba(63, 185, 80, 0.4);
+}
+.balance-chip.a .val {
+  color: var(--accent2);
+}
+
+/* Receiver field visual feedback (add-student / register-payment forms) */
+.receiver-highlight {
+  border-color: #22c55e !important;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.15);
+}
+.receiver-helper {
+  color: #22c55e;
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
 /* ── Modal ──────────────────────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed;

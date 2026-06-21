@@ -583,6 +583,22 @@ export async function deletePayment(id: string) {
 }
 
 // ── CASHBOOK ────────────────────────────────────────────────────────────────
+// Single source of truth for receiver balances — every receiver-balance figure
+// shown anywhere in the app (Cashbook, Students, Payments, Dashboard) MUST go
+// through this, never through students.paid_amount (which can't reflect
+// refunds/adjustments/renewals correctly the way cash_entries does).
+export async function getCashBalances(): Promise<CashBalances> {
+  const supabase = getSupabaseAdmin();
+  const { data: entries } = await supabase.from("cash_entries").select("owner, entry_type, amount");
+  const balances: CashBalances = { محمد: 0, عبدالله: 0 };
+  for (const e of entries ?? []) {
+    if (e.owner in balances) {
+      balances[e.owner as Receiver] += e.entry_type === "in" ? Number(e.amount) : -Number(e.amount);
+    }
+  }
+  return balances;
+}
+
 export async function listCashbook(filters: { owner?: string; type?: string } = {}): Promise<{
   data: CashEntry[];
   balances: CashBalances;
@@ -598,17 +614,11 @@ export async function listCashbook(filters: { owner?: string; type?: string } = 
   const { data: entries, error } = await query;
   if (error) throw error;
 
-  const [{ data: allEntries }, { data: students }] = await Promise.all([
-    supabase.from("cash_entries").select("owner, entry_type, amount"),
+  const [balances, { data: students }] = await Promise.all([
+    getCashBalances(),
     supabase.from("students").select("id, name"),
   ]);
   const studentsById = new Map((students ?? []).map((s) => [s.id, s.name]));
-  const balances: CashBalances = { محمد: 0, عبدالله: 0 };
-  for (const e of allEntries ?? []) {
-    if (e.owner in balances) {
-      balances[e.owner as Receiver] += e.entry_type === "in" ? Number(e.amount) : -Number(e.amount);
-    }
-  }
 
   const data = (entries ?? []).map((e) => ({
     ...e,

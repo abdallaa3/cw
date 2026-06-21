@@ -11,7 +11,7 @@ import { RenewStudentForm } from "@/components/RenewStudentForm";
 import { toast } from "@/components/toast";
 import { saveStudentAction, deleteStudentAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
-import { PAYMENT_METHODS, RECEIVERS, type Group, type Student, type StudentStatusFilter } from "@/lib/types";
+import { PAYMENT_METHODS, RECEIVERS, type CashBalances, type Group, type Student, type StudentStatusFilter } from "@/lib/types";
 import { egp, formatDate, METHOD_LABELS, STUDY_TYPE_LABELS, ONLINE_TYPE_LABELS, todayIso } from "@/lib/utils";
 import { writeXlsx } from "@/lib/xlsx";
 
@@ -59,7 +59,15 @@ function statusBadge(s: Student) {
   return <span className="badge red">لم يدفع</span>;
 }
 
-export function StudentsView({ students, groups }: { students: Student[]; groups: Group[] }) {
+export function StudentsView({
+  students,
+  groups,
+  balances,
+}: {
+  students: Student[];
+  groups: Group[];
+  balances: CashBalances;
+}) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [groupId, setGroupId] = useState("");
@@ -208,6 +216,11 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
 
   return (
     <>
+      <div className="balance-chips">
+        <span className="balance-chip m"><span className="lbl">رصيد محمد</span><span className="val">{egp(balances["محمد"])}</span></span>
+        <span className="balance-chip a"><span className="lbl">رصيد عبدالله</span><span className="val">{egp(balances["عبدالله"])}</span></span>
+      </div>
+
       <div className="toolbar">
         <input className="field" placeholder="بحث بالاسم أو التليفون..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ minWidth: 200 }} />
         <select className="field" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
@@ -368,9 +381,16 @@ export function StudentsView({ students, groups }: { students: Student[]; groups
                 </div>
                 <div className="form-group">
                   <label className="form-label">المستلم *</label>
-                  <select className="form-control" value={form.received_by} onChange={(e) => setForm({ ...form, received_by: e.target.value })}>
+                  <select
+                    className={`form-control ${RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) ? "receiver-highlight" : ""}`}
+                    value={form.received_by}
+                    onChange={(e) => setForm({ ...form, received_by: e.target.value })}
+                  >
                     {RECEIVERS.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
+                  {RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) && (
+                    <div className="receiver-helper">سيتم إضافة المبلغ إلى رصيد {form.received_by}</div>
+                  )}
                 </div>
               </div>
               <div className="form-group">

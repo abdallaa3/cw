@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PaymentForm, type PaymentStudent } from "@/components/PaymentForm";
 import { toast } from "@/components/toast";
 import { deletePaymentAction } from "@/lib/actions";
-import { PAYMENT_METHODS, RECEIVERS, TRANSACTION_TYPES, type Payment } from "@/lib/types";
+import { PAYMENT_METHODS, RECEIVERS, TRANSACTION_TYPES, type CashBalances, type Payment } from "@/lib/types";
 import { egp, METHOD_LABELS, methodLabel, formatDate, signedPaymentAmount, todayIso, TX_TYPE_LABELS } from "@/lib/utils";
 import { writeXlsx } from "@/lib/xlsx";
 
@@ -24,7 +24,15 @@ const TX_TEXT: Record<string, string> = {
   cancelled: "var(--text2)",
 };
 
-export function PaymentsView({ payments, students }: { payments: Payment[]; students: PaymentStudent[] }) {
+export function PaymentsView({
+  payments,
+  students,
+  balances,
+}: {
+  payments: Payment[];
+  students: PaymentStudent[];
+  balances: CashBalances;
+}) {
   const router = useRouter();
   const [receivedBy, setReceivedBy] = useState("");
   const [method, setMethod] = useState("");
@@ -88,6 +96,11 @@ export function PaymentsView({ payments, students }: { payments: Payment[]; stud
 
   return (
     <>
+      <div className="balance-chips">
+        <span className="balance-chip m"><span className="lbl">رصيد محمد</span><span className="val">{egp(balances["محمد"])}</span></span>
+        <span className="balance-chip a"><span className="lbl">رصيد عبدالله</span><span className="val">{egp(balances["عبدالله"])}</span></span>
+      </div>
+
       <div className="toolbar">
         <select className="field" value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)}>
           <option value="">كل المستلمين</option>

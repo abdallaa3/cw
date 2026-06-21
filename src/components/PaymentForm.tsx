@@ -130,11 +130,18 @@ export function PaymentForm({
         </div>
         <div className="form-group">
           <label className="form-label">المستلم</label>
-          <select className="form-control" value={form.received_by} onChange={(e) => setForm({ ...form, received_by: e.target.value })}>
+          <select
+            className={`form-control ${RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) ? "receiver-highlight" : ""}`}
+            value={form.received_by}
+            onChange={(e) => setForm({ ...form, received_by: e.target.value })}
+          >
             {RECEIVERS.map((r) => (
               <option key={r} value={r}>{r}</option>
             ))}
           </select>
+          {RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) && (
+            <div className="receiver-helper">سيتم إضافة المبلغ إلى رصيد {form.received_by}</div>
+          )}
         </div>
       </div>
 

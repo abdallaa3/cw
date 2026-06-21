@@ -116,7 +116,18 @@ export function CashbookView({
           e.notes ?? "", e.linked_student_name ?? "", e.linked_payment_id ? "نعم" : "لا",
         ]),
       ];
-      const blob = await writeXlsx([{ name: "الخزينة", rows: data }]);
+      // Balance summary — reuses the same `balances` (cash_entries source of
+      // truth) shown on this page, never recomputed from students.paid_amount.
+      const summary: (string | number)[][] = [
+        ["الشخص", "إجمالي الرصيد"],
+        ["محمد", balances["محمد"]],
+        ["عبدالله", balances["عبدالله"]],
+        ["الإجمالي", balances["محمد"] + balances["عبدالله"]],
+      ];
+      const blob = await writeXlsx([
+        { name: "الخزينة", rows: data },
+        { name: "ملخص الأرصدة", rows: summary },
+      ]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
