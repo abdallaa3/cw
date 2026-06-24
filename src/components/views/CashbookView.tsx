@@ -8,7 +8,7 @@ import { toast } from "@/components/toast";
 import { saveCashEntryAction, deleteCashEntryAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
 import { RECEIVERS, type CashBalances, type CashEntry } from "@/lib/types";
-import { egp, formatDate, ENTRY_TYPE_LABELS, todayIso } from "@/lib/utils";
+import { egp, formatDate, personRunningBalances, ENTRY_TYPE_LABELS, todayIso } from "@/lib/utils";
 import { writeXlsx } from "@/lib/xlsx";
 import type { PaymentStudent } from "@/components/PaymentForm";
 
@@ -51,15 +51,13 @@ export function CashbookView({
     [entries, owner, type],
   );
 
-  // running balance per filtered list (immutable reduce, no reassignment)
+  // Per-owner running balance computed over ALL entries (never just the
+  // filtered subset) so each row always reflects that row's own person's
+  // true balance at that point in time, regardless of the owner/type filter.
+  const runningById = useMemo(() => personRunningBalances(entries), [entries]);
   const rows = useMemo(
-    () =>
-      filtered.reduce<{ entry: CashEntry; running: number }[]>((acc, e) => {
-        const prev = acc.length === 0 ? 0 : acc[acc.length - 1].running;
-        const delta = e.entry_type === "in" ? Number(e.amount) : -Number(e.amount);
-        return [...acc, { entry: e, running: prev + delta }];
-      }, []),
-    [filtered],
+    () => filtered.map((entry) => ({ entry, running: runningById.get(entry.id) ?? 0 })),
+    [filtered, runningById],
   );
 
   function openCreate() {
@@ -110,9 +108,9 @@ export function CashbookView({
   async function exportCashbook() {
     try {
       const data: (string | number)[][] = [
-        ["id", "الشخص", "النوع", "المبلغ", "التاريخ", "ملاحظات", "طالب مرتبط", "مرتبطة بدفعة"],
+        ["id", "الشخص", "النوع", "المبلغ", "رصيد الشخص بعد الحركة", "التاريخ", "ملاحظات", "طالب مرتبط", "مرتبطة بدفعة"],
         ...filtered.map((e) => [
-          e.id, e.owner, ENTRY_TYPE_LABELS[e.entry_type], e.amount, e.entry_date,
+          e.id, e.owner, ENTRY_TYPE_LABELS[e.entry_type], e.amount, runningById.get(e.id) ?? 0, e.entry_date,
           e.notes ?? "", e.linked_student_name ?? "", e.linked_payment_id ? "نعم" : "لا",
         ]),
       ];
@@ -181,7 +179,7 @@ export function CashbookView({
           <table>
             <thead>
               <tr>
-                <th>الشخص</th><th>النوع</th><th>المبلغ</th><th>الرصيد المتحرك</th>
+                <th>الشخص</th><th>النوع</th><th>المبلغ</th><th>رصيد الشخص بعد الحركة</th>
                 <th>ملاحظات</th><th>طالب مرتبط</th><th>التاريخ</th><th>إجراءات</th>
               </tr>
             </thead>

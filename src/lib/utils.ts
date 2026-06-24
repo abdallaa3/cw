@@ -1,4 +1,4 @@
-import { WEEKDAYS, type AdjustmentDirection, type EntryType, type PaymentMethod, type Receiver, type TransactionType } from "./types";
+import { WEEKDAYS, type AdjustmentDirection, type CashEntry, type EntryType, type PaymentMethod, type Receiver, type TransactionType } from "./types";
 
 export function money(value: unknown): number {
   const n = typeof value === "number" ? value : Number(String(value ?? "").replace(/[^\d.-]/g, ""));
@@ -76,6 +76,29 @@ export function paymentCashType(
   if (t === "refund") return "out";
   if (t === "adjustment") return direction === "decrease" ? "out" : "in";
   return "in";
+}
+
+// Each cashbook row's running balance must reflect ONLY its own owner
+// (محمد / عبدالله), never a combined total — so this keeps one accumulator
+// per owner and walks entries oldest → newest (entry_date, then created_at,
+// then id as deterministic tie-breakers). The final accumulator value per
+// owner always matches getCashBalances(), since both sum the exact same
+// cash_entries with no filtering.
+export function personRunningBalances(entries: CashEntry[]): Map<string, number> {
+  const sorted = [...entries].sort((a, b) => {
+    if (a.entry_date !== b.entry_date) return a.entry_date < b.entry_date ? -1 : 1;
+    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const accumulators = new Map<string, number>();
+  const runningById = new Map<string, number>();
+  for (const e of sorted) {
+    const prev = accumulators.get(e.owner) ?? 0;
+    const next = prev + (e.entry_type === "in" ? Number(e.amount) : -Number(e.amount));
+    accumulators.set(e.owner, next);
+    runningById.set(e.id, next);
+  }
+  return runningById;
 }
 
 export const STUDY_TYPE_LABELS: Record<string, string> = {
