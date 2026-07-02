@@ -1009,9 +1009,9 @@ select.field {
 .actions-dropdown {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
   z-index: 300;
-  min-width: 160px;
+  width: 210px;
+  max-width: calc(100vw - 24px);
   background: var(--bg2);
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -1575,6 +1575,52 @@ input[type="number"] {
   .report-grid {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+}
+
+/* ── Students toolbar + balance chips responsive ────────────────────────── */
+/* At 900px: let inputs flex and wrap naturally */
+@media (max-width: 900px) {
+  .students-toolbar input.field,
+  .students-toolbar select.field {
+    flex: 1 1 150px;
+    min-width: 0;
+  }
+}
+
+/* At 640px: stack toolbar vertically, full-width controls */
+@media (max-width: 640px) {
+  .students-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .students-toolbar input.field,
+  .students-toolbar select.field,
+  .students-toolbar .btn {
+    width: 100% !important;
+    flex: none;
+    min-width: 0 !important;
+    box-sizing: border-box;
+  }
+  .students-toolbar .spacer {
+    display: none;
+  }
+  .students-toolbar .badge {
+    width: 100%;
+    text-align: center;
+    padding: 6px;
+    font-size: 0.82rem;
+  }
+  .balance-chips {
+    width: 100%;
+  }
+  .balance-chip {
+    flex: 1;
+    justify-content: center;
+  }
+  .actions-dropdown {
+    width: min(210px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
   }
 }
 

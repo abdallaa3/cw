@@ -85,7 +85,7 @@ export function StudentsView({
   const [renewFor, setRenewFor] = useState<Student | null>(null);
   const [trackFor, setTrackFor] = useState<Student | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; right?: number; left?: number } | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   // Close the dropdown when clicking anywhere outside it
   useEffect(() => {
@@ -200,20 +200,27 @@ export function StudentsView({
     } else toast(res.error, "error");
   }
 
-  // Opens the fixed-position ⋯ dropdown. Anchors to button right edge by default;
-  // flips to left-anchor if the button is too close to the left viewport edge.
+  // Opens the fixed-position ⋯ dropdown.
+  // Always uses a single clamped `left` — never both left+right — to prevent stretching.
+  // Flips upward when the menu would overflow the bottom of the viewport.
   function openMenu(e: MouseEvent<HTMLButtonElement>, id: string) {
     e.stopPropagation();
     if (openMenuId === id) { setOpenMenuId(null); setMenuPos(null); return; }
     const rect = e.currentTarget.getBoundingClientRect();
-    const dropW = 168;
-    const pos: { top: number; right?: number; left?: number } = { top: rect.bottom + 4 };
-    if (rect.right - dropW < 8) {
-      pos.left = Math.max(8, rect.left);
-    } else {
-      pos.right = window.innerWidth - rect.right;
-    }
-    setMenuPos(pos);
+    const menuW = 210;
+    const student = ordered.find((s) => s.id === id);
+    const menuH = student?.archived_at ? 90 : 220;
+    const margin = 12;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // Anchor left edge to button's right minus menuW, then clamp within viewport
+    let left = rect.right - menuW;
+    if (left < margin) left = margin;
+    if (left + menuW > vw - margin) left = vw - menuW - margin;
+    // Open below; flip above if near the bottom edge
+    let top = rect.bottom + 8;
+    if (top + menuH > vh - margin) top = Math.max(margin, rect.top - menuH - 4);
+    setMenuPos({ top, left });
     setOpenMenuId(id);
   }
 
@@ -260,7 +267,7 @@ export function StudentsView({
         <span className="balance-chip a"><span className="lbl">رصيد عبدالله</span><span className="val">{egp(balances["عبدالله"])}</span></span>
       </div>
 
-      <div className="toolbar">
+      <div className="toolbar students-toolbar">
         <input className="field" placeholder="بحث بالاسم أو التليفون..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ minWidth: 200 }} />
         <select className="field" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
           <option value="">كل الجروبات</option>
@@ -349,7 +356,6 @@ export function StudentsView({
           style={{
             position: "fixed",
             top: menuPos.top,
-            right: menuPos.right,
             left: menuPos.left,
             zIndex: 9999,
           }}
