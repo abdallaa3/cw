@@ -33,6 +33,8 @@ export function CashbookView({
   const router = useRouter();
   const [owner, setOwner] = useState("");
   const [type, setType] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CashEntry | null>(null);
   const [form, setForm] = useState<FormState>({
@@ -47,8 +49,13 @@ export function CashbookView({
   const [saving, setSaving] = useState(false);
 
   const filtered = useMemo(
-    () => entries.filter((e) => (!owner || e.owner === owner) && (!type || e.entry_type === type)),
-    [entries, owner, type],
+    () => entries.filter((e) =>
+      (!owner || e.owner === owner) &&
+      (!type || e.entry_type === type) &&
+      (!dateFrom || e.entry_date >= dateFrom) &&
+      (!dateTo || e.entry_date <= dateTo)
+    ),
+    [entries, owner, type, dateFrom, dateTo],
   );
 
   // Per-owner running balance computed over ALL entries (never just the
@@ -167,6 +174,10 @@ export function CashbookView({
           <option value="in">دخل فقط</option>
           <option value="out">مصروف فقط</option>
         </select>
+        <span className="muted" style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>من:</span>
+        <input className="field" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ width: 140 }} />
+        <span className="muted" style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>إلى:</span>
+        <input className="field" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ width: 140 }} />
         <div className="spacer" />
         <button className="btn btn-success" onClick={exportCashbook}>📥 تصدير</button>
         <button className="btn btn-primary" onClick={openCreate}>+ حركة خزينة</button>

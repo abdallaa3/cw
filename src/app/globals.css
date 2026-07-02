@@ -992,6 +992,15 @@ select.field {
   }
 }
 
+/* ── Compact table variant (students page) ─────────────────────────────── */
+.table-compact thead th {
+  padding: 8px 10px;
+}
+.table-compact tbody td {
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+
 /* ── Row actions dropdown ───────────────────────────────────────────────── */
 .actions-menu {
   position: relative;

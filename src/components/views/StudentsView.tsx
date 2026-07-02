@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Modal";
@@ -85,11 +85,12 @@ export function StudentsView({
   const [renewFor, setRenewFor] = useState<Student | null>(null);
   const [trackFor, setTrackFor] = useState<Student | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; right?: number; left?: number } | null>(null);
 
   // Close the dropdown when clicking anywhere outside it
   useEffect(() => {
     if (!openMenuId) return;
-    const close = () => setOpenMenuId(null);
+    const close = () => { setOpenMenuId(null); setMenuPos(null); };
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [openMenuId]);
@@ -199,6 +200,23 @@ export function StudentsView({
     } else toast(res.error, "error");
   }
 
+  // Opens the fixed-position ⋯ dropdown. Anchors to button right edge by default;
+  // flips to left-anchor if the button is too close to the left viewport edge.
+  function openMenu(e: MouseEvent<HTMLButtonElement>, id: string) {
+    e.stopPropagation();
+    if (openMenuId === id) { setOpenMenuId(null); setMenuPos(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dropW = 168;
+    const pos: { top: number; right?: number; left?: number } = { top: rect.bottom + 4 };
+    if (rect.right - dropW < 8) {
+      pos.left = Math.max(8, rect.left);
+    } else {
+      pos.right = window.innerWidth - rect.right;
+    }
+    setMenuPos(pos);
+    setOpenMenuId(id);
+  }
+
   async function exportStudents() {
     try {
       const rows: (string | number)[][] = [
@@ -233,6 +251,7 @@ export function StudentsView({
   }
 
   const firstAmount = Number(form.first_payment_amount || 0);
+  const openStudent = openMenuId ? (ordered.find((s) => s.id === openMenuId) ?? null) : null;
 
   return (
     <>
@@ -271,7 +290,7 @@ export function StudentsView({
         {ordered.length === 0 ? (
           <EmptyState text="لا يوجد طلاب" emoji="👨‍🎓" />
         ) : (
-          <table>
+          <table className="table-compact">
             <thead>
               <tr>
                 {/* Phone column removed from table — still searchable and visible in modals */}
@@ -282,10 +301,7 @@ export function StudentsView({
             <tbody>
               {ordered.map((s) => (
                 <tr key={s.id}>
-                  <td style={{ fontWeight: 600 }}>
-                    {s.name}
-                    {s.age != null ? <span className="muted" style={{ fontWeight: 400 }}> · {s.age} سنة</span> : null}
-                  </td>
+                  <td style={{ fontWeight: 600 }}>{s.name}</td>
                   <td>
                     <span className="badge">{STUDY_TYPE_LABELS[s.study_type] ?? s.study_type}</span>
                     {s.study_type === "online" && s.online_type ? <span className="muted" style={{ fontSize: ".75rem" }}> {ONLINE_TYPE_LABELS[s.online_type]}</span> : null}
@@ -303,41 +319,18 @@ export function StudentsView({
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     {s.archived_at ? (
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                         <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>
                         <div className="actions-menu">
-                          <button
-                            className="btn btn-outline btn-sm"
-                            onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === s.id ? null : s.id); }}
-                          >⋯</button>
-                          {openMenuId === s.id && (
-                            <div className="actions-dropdown">
-                              <button onClick={(e) => { e.stopPropagation(); openEdit(s); setOpenMenuId(null); }}>تعديل</button>
-                              <hr className="dropdown-divider" />
-                              <button className="danger" onClick={(e) => { e.stopPropagation(); void remove(s); setOpenMenuId(null); }}>حذف</button>
-                            </div>
-                          )}
+                          <button className="btn btn-outline btn-sm" onClick={(e) => openMenu(e, s.id)}>⋯</button>
                         </div>
                       </div>
                     ) : (
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                         <button className="btn btn-success btn-sm" onClick={() => setPayFor(s)}>دفع</button>
                         <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>
                         <div className="actions-menu">
-                          <button
-                            className="btn btn-outline btn-sm"
-                            onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === s.id ? null : s.id); }}
-                          >⋯</button>
-                          {openMenuId === s.id && (
-                            <div className="actions-dropdown">
-                              <button onClick={(e) => { e.stopPropagation(); setTrackFor(s); setOpenMenuId(null); }}>تتبع الدفعات</button>
-                              <button onClick={(e) => { e.stopPropagation(); setRenewFor(s); setOpenMenuId(null); }}>تجديد الاشتراك</button>
-                              <button onClick={(e) => { e.stopPropagation(); setAdjFor({ id: s.id, name: s.name }); setOpenMenuId(null); }}>خصم / استرداد</button>
-                              <button onClick={(e) => { e.stopPropagation(); openEdit(s); setOpenMenuId(null); }}>تعديل</button>
-                              <hr className="dropdown-divider" />
-                              <button className="danger" onClick={(e) => { e.stopPropagation(); void remove(s); setOpenMenuId(null); }}>حذف</button>
-                            </div>
-                          )}
+                          <button className="btn btn-outline btn-sm" onClick={(e) => openMenu(e, s.id)}>⋯</button>
                         </div>
                       </div>
                     )}
@@ -348,6 +341,38 @@ export function StudentsView({
           </table>
         )}
       </div>
+
+      {/* Fixed-position dropdown — rendered outside table-wrap to avoid overflow clipping */}
+      {openStudent && menuPos && (
+        <div
+          className="actions-dropdown"
+          style={{
+            position: "fixed",
+            top: menuPos.top,
+            right: menuPos.right,
+            left: menuPos.left,
+            zIndex: 9999,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {openStudent.archived_at ? (
+            <>
+              <button onClick={() => { openEdit(openStudent); setOpenMenuId(null); setMenuPos(null); }}>تعديل</button>
+              <hr className="dropdown-divider" />
+              <button className="danger" onClick={() => { void remove(openStudent); setOpenMenuId(null); setMenuPos(null); }}>حذف</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => { setTrackFor(openStudent); setOpenMenuId(null); setMenuPos(null); }}>تتبع الدفعات</button>
+              <button onClick={() => { setRenewFor(openStudent); setOpenMenuId(null); setMenuPos(null); }}>تجديد الاشتراك</button>
+              <button onClick={() => { setAdjFor({ id: openStudent.id, name: openStudent.name }); setOpenMenuId(null); setMenuPos(null); }}>خصم / استرداد</button>
+              <button onClick={() => { openEdit(openStudent); setOpenMenuId(null); setMenuPos(null); }}>تعديل</button>
+              <hr className="dropdown-divider" />
+              <button className="danger" onClick={() => { void remove(openStudent); setOpenMenuId(null); setMenuPos(null); }}>حذف</button>
+            </>
+          )}
+        </div>
+      )}
 
       {open && (
         <Modal title={editing ? "تعديل طالب" : "إضافة طالب"} onClose={() => setOpen(false)}>
