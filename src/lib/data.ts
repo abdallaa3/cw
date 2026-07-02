@@ -207,8 +207,8 @@ export async function getStudent(id: string): Promise<Student | null> {
   } as Student;
 }
 
-// Creating a student ALWAYS records a mandatory first payment, which in turn
-// auto-creates the linked cashbook entry for the selected receiver.
+// Creating a student records an optional first payment. If firstAmount is 0 the
+// student is saved with paid_amount=0 and no cashbook entry is created.
 export async function createStudent(payload: Record<string, unknown>) {
   const supabase = getSupabaseAdmin();
   const name = String(payload.name ?? "").trim();
@@ -218,8 +218,7 @@ export async function createStudent(payload: Record<string, unknown>) {
   const firstAmount = Number(payload.first_payment_amount ?? 0);
   const receiver = String(payload.received_by ?? "") as Receiver;
   const method = String(payload.method ?? "cash");
-  if (!(firstAmount > 0)) throw new Error("الدفعة الأولى مطلوبة عند إضافة الطالب");
-  if (!RECEIVERS.includes(receiver)) throw new Error("اختر مستلم الدفعة الأولى (محمد أو عبدالله)");
+  if (firstAmount > 0 && !RECEIVERS.includes(receiver)) throw new Error("اختر مستلم الدفعة الأولى (محمد أو عبدالله)");
 
   const row = {
     name,
@@ -244,15 +243,17 @@ export async function createStudent(payload: Record<string, unknown>) {
     group_id: data.group_id,
   });
 
-  // Mandatory first payment → also creates the linked cashbook entry + its audit.
-  await createPayment({
-    student_id: data.id,
-    amount: firstAmount,
-    method,
-    received_by: receiver,
-    payment_date: String(payload.payment_date || todayIso()),
-    notes: "دفعة أولى عند التسجيل",
-  });
+  // Optional first payment — only creates the cashbook entry if amount > 0.
+  if (firstAmount > 0) {
+    await createPayment({
+      student_id: data.id,
+      amount: firstAmount,
+      method,
+      received_by: receiver,
+      payment_date: String(payload.payment_date || todayIso()),
+      notes: "دفعة أولى عند التسجيل",
+    });
+  }
 
   return data as Student;
 }
@@ -607,8 +608,8 @@ export async function listCashbook(filters: { owner?: string; type?: string } = 
   let query = supabase
     .from("cash_entries")
     .select("*")
-    .order("entry_date", { ascending: true })
-    .order("created_at", { ascending: true });
+    .order("entry_date", { ascending: false })
+    .order("created_at", { ascending: false });
   if (filters.owner) query = query.eq("owner", filters.owner);
   if (filters.type) query = query.eq("entry_type", filters.type);
   const { data: entries, error } = await query;
@@ -748,10 +749,13 @@ export async function getDashboard(): Promise<DashboardData> {
 
   let paid_students_count = 0;
   let not_paid_students_count = 0;
+  let zero_paid_students_count = 0;
   for (const s of activeStudents) {
-    const remaining = Number(s.total_amount ?? 0) - (paidByStudent.get(s.id) ?? 0);
+    const paid = paidByStudent.get(s.id) ?? 0;
+    const remaining = Number(s.total_amount ?? 0) - paid;
     if (remaining <= 0) paid_students_count += 1;
     else not_paid_students_count += 1;
+    if (Number(s.total_amount ?? 0) > 0 && paid === 0) zero_paid_students_count += 1;
   }
 
   const recvMap = new Map<string, { total: number; count: number }>();
@@ -881,6 +885,7 @@ export async function getDashboard(): Promise<DashboardData> {
     total_groups: (groups ?? []).length,
     paid_students_count,
     not_paid_students_count,
+    zero_paid_students_count,
     cash_balances,
     receivers_summary: [...recvMap.entries()].map(([received_by, v]) => ({ received_by, ...v })),
     methods_summary: [...methodMap.entries()].map(([method, v]) => ({ method, ...v })),

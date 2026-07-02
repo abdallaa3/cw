@@ -21,6 +21,7 @@ export default async function DashboardPage() {
         <StatCard label="عدد الطلاب" value={d.total_students} color="blue" icon="👨‍🎓" />
         <StatCard label="عدد الجروبات" value={d.total_groups} color="blue" icon="📚" />
         <StatCard label="عليهم متبقي" value={d.not_paid_students_count} color="yellow" icon="⚠️" />
+        <StatCard label="طلاب لم يدفعوا بعد" value={d.zero_paid_students_count} color="red" icon="🚫" sub="لم يسجّلوا أي دفعة" />
       </div>
 
       <div className="section-header">

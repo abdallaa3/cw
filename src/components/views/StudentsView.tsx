@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Modal";
@@ -8,8 +8,10 @@ import { EmptyState } from "@/components/EmptyState";
 import { PaymentForm } from "@/components/PaymentForm";
 import { AdjustmentForm } from "@/components/AdjustmentForm";
 import { RenewStudentForm } from "@/components/RenewStudentForm";
+import { StudentPaymentsModal } from "@/components/StudentPaymentsModal";
 import { toast } from "@/components/toast";
-import { saveStudentAction, deleteStudentAction } from "@/lib/actions";
+import { saveStudentAction } from "@/lib/actions";
+import { deleteStudentAction } from "@/lib/actions";
 import { getStoredUser } from "@/components/useCurrentUser";
 import { PAYMENT_METHODS, RECEIVERS, type CashBalances, type Group, type Student, type StudentStatusFilter } from "@/lib/types";
 import { egp, formatDate, METHOD_LABELS, STUDY_TYPE_LABELS, ONLINE_TYPE_LABELS, todayIso } from "@/lib/utils";
@@ -81,6 +83,16 @@ export function StudentsView({
   const [payFor, setPayFor] = useState<Student | null>(null);
   const [adjFor, setAdjFor] = useState<{ id: string; name: string } | null>(null);
   const [renewFor, setRenewFor] = useState<Student | null>(null);
+  const [trackFor, setTrackFor] = useState<Student | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  // Close the dropdown when clicking anywhere outside it
+  useEffect(() => {
+    if (!openMenuId) return;
+    const close = () => setOpenMenuId(null);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [openMenuId]);
 
   // "students" includes both active and archived rows — filtered client-side
   // so switching Active/Archived/All never needs a re-fetch.
@@ -154,11 +166,12 @@ export function StudentsView({
       next_due_date: form.next_due_date,
       notes: form.notes,
     };
+    const firstAmount = Number(form.first_payment_amount || 0);
     const payload = editing
       ? base
       : {
           ...base,
-          first_payment_amount: Number(form.first_payment_amount || 0),
+          first_payment_amount: firstAmount,
           received_by: form.received_by,
           method: form.method,
           payment_date: todayIso(),
@@ -166,7 +179,12 @@ export function StudentsView({
     const res = await saveStudentAction(editing?.id ?? null, payload);
     setSaving(false);
     if (res.ok) {
-      toast(editing ? "تم تعديل الطالب" : "تم إضافة الطالب وتسجيل الدفعة الأولى");
+      const msg = editing
+        ? "تم تعديل الطالب"
+        : firstAmount > 0
+        ? "تم إضافة الطالب وتسجيل الدفعة الأولى"
+        : "تم إضافة الطالب";
+      toast(msg);
       setOpen(false);
       router.refresh();
     } else setError(res.error);
@@ -214,6 +232,8 @@ export function StudentsView({
     }
   }
 
+  const firstAmount = Number(form.first_payment_amount || 0);
+
   return (
     <>
       <div className="balance-chips">
@@ -254,15 +274,18 @@ export function StudentsView({
           <table>
             <thead>
               <tr>
-                <th>الاسم</th><th>التليفون</th><th>النوع</th><th>الجروب</th><th>الإجمالي</th>
+                {/* Phone column removed from table — still searchable and visible in modals */}
+                <th>الاسم</th><th>النوع</th><th>الجروب</th><th>الإجمالي</th>
                 <th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {ordered.map((s) => (
                 <tr key={s.id}>
-                  <td style={{ fontWeight: 600 }}>{s.name}{s.age != null ? <span className="muted" style={{ fontWeight: 400 }}> · {s.age} سنة</span> : null}</td>
-                  <td className="muted">{s.phone ?? "—"}</td>
+                  <td style={{ fontWeight: 600 }}>
+                    {s.name}
+                    {s.age != null ? <span className="muted" style={{ fontWeight: 400 }}> · {s.age} سنة</span> : null}
+                  </td>
                   <td>
                     <span className="badge">{STUDY_TYPE_LABELS[s.study_type] ?? s.study_type}</span>
                     {s.study_type === "online" && s.online_type ? <span className="muted" style={{ fontSize: ".75rem" }}> {ONLINE_TYPE_LABELS[s.online_type]}</span> : null}
@@ -280,20 +303,43 @@ export function StudentsView({
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     {s.archived_at ? (
-                      <>
-                        <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>{" "}
-                        <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}>تعديل</button>{" "}
-                        <button className="btn btn-danger btn-sm" onClick={() => remove(s)}>حذف</button>
-                      </>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>
+                        <div className="actions-menu">
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === s.id ? null : s.id); }}
+                          >⋯</button>
+                          {openMenuId === s.id && (
+                            <div className="actions-dropdown">
+                              <button onClick={(e) => { e.stopPropagation(); openEdit(s); setOpenMenuId(null); }}>تعديل</button>
+                              <hr className="dropdown-divider" />
+                              <button className="danger" onClick={(e) => { e.stopPropagation(); void remove(s); setOpenMenuId(null); }}>حذف</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     ) : (
-                      <>
-                        <button className="btn btn-success btn-sm" onClick={() => setPayFor(s)}>دفع</button>{" "}
-                        <button className="btn btn-outline btn-sm" onClick={() => setAdjFor({ id: s.id, name: s.name })}>خصم / استرداد</button>{" "}
-                        <button className="btn btn-outline btn-sm" onClick={() => setRenewFor(s)}>تجديد الاشتراك</button>{" "}
-                        <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>{" "}
-                        <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}>تعديل</button>{" "}
-                        <button className="btn btn-danger btn-sm" onClick={() => remove(s)}>حذف</button>
-                      </>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <button className="btn btn-success btn-sm" onClick={() => setPayFor(s)}>دفع</button>
+                        <Link className="btn btn-outline btn-sm" href={`/invoice?student=${s.id}`}>فاتورة</Link>
+                        <div className="actions-menu">
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === s.id ? null : s.id); }}
+                          >⋯</button>
+                          {openMenuId === s.id && (
+                            <div className="actions-dropdown">
+                              <button onClick={(e) => { e.stopPropagation(); setTrackFor(s); setOpenMenuId(null); }}>تتبع الدفعات</button>
+                              <button onClick={(e) => { e.stopPropagation(); setRenewFor(s); setOpenMenuId(null); }}>تجديد الاشتراك</button>
+                              <button onClick={(e) => { e.stopPropagation(); setAdjFor({ id: s.id, name: s.name }); setOpenMenuId(null); }}>خصم / استرداد</button>
+                              <button onClick={(e) => { e.stopPropagation(); openEdit(s); setOpenMenuId(null); }}>تعديل</button>
+                              <hr className="dropdown-divider" />
+                              <button className="danger" onClick={(e) => { e.stopPropagation(); void remove(s); setOpenMenuId(null); }}>حذف</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -312,13 +358,13 @@ export function StudentsView({
               <input className="form-control" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div className="form-group">
-              <label className="form-label">التليفون *</label>
+              <label className="form-label">التليفون</label>
               <input className="form-control" type="text" inputMode="numeric" pattern="[0-9]*" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             </div>
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">السن *</label>
+              <label className="form-label">السن</label>
               <input className="form-control" type="text" inputMode="numeric" pattern="[0-9]*" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} />
             </div>
             <div className="form-group">
@@ -373,29 +419,44 @@ export function StudentsView({
 
           {!editing && (
             <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12, marginBottom: 12 }}>
-              <div className="section-title" style={{ marginBottom: 10 }}><span className="dot green" /> الدفعة الأولى (إجبارية)</div>
+              <div className="section-title" style={{ marginBottom: 10 }}>
+                <span className="dot" /> الدفعة الأولى <span className="muted" style={{ fontWeight: 400, fontSize: ".8rem" }}>(اختياري — يمكن تسجيلها لاحقاً)</span>
+              </div>
               <div className="form-row">
                 <div className="form-group">
-                  <label className="form-label">مبلغ الدفعة الأولى *</label>
-                  <input className="form-control" type="text" inputMode="decimal" value={form.first_payment_amount} onChange={(e) => setForm({ ...form, first_payment_amount: e.target.value })} />
+                  <label className="form-label">مبلغ الدفعة الأولى</label>
+                  <input
+                    className="form-control"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={form.first_payment_amount}
+                    onChange={(e) => setForm({ ...form, first_payment_amount: e.target.value })}
+                  />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">المستلم *</label>
+                  <label className="form-label">المستلم {firstAmount > 0 ? "*" : ""}</label>
                   <select
-                    className={`form-control ${RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) ? "receiver-highlight" : ""}`}
+                    className={`form-control ${firstAmount > 0 && RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) ? "receiver-highlight" : ""}`}
                     value={form.received_by}
                     onChange={(e) => setForm({ ...form, received_by: e.target.value })}
+                    disabled={firstAmount === 0}
                   >
                     {RECEIVERS.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
-                  {RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) && (
+                  {firstAmount > 0 && RECEIVERS.includes(form.received_by as (typeof RECEIVERS)[number]) && (
                     <div className="receiver-helper">سيتم إضافة المبلغ إلى رصيد {form.received_by}</div>
                   )}
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">طريقة الدفع *</label>
-                <select className="form-control" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
+                <label className="form-label">طريقة الدفع {firstAmount > 0 ? "*" : ""}</label>
+                <select
+                  className="form-control"
+                  value={form.method}
+                  onChange={(e) => setForm({ ...form, method: e.target.value })}
+                  disabled={firstAmount === 0}
+                >
                   {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{METHOD_LABELS[m]}</option>)}
                 </select>
               </div>
@@ -423,6 +484,10 @@ export function StudentsView({
 
       {renewFor && (
         <RenewStudentForm student={renewFor} groups={groups} onClose={() => setRenewFor(null)} />
+      )}
+
+      {trackFor && (
+        <StudentPaymentsModal student={trackFor} onClose={() => setTrackFor(null)} />
       )}
     </>
   );

@@ -181,6 +181,8 @@ export type DashboardData = {
   total_groups: number;
   paid_students_count: number;
   not_paid_students_count: number;
+  // Active students with total_amount > 0 and paid_amount === 0 (never paid anything yet)
+  zero_paid_students_count: number;
   cash_balances: CashBalances;
   receivers_summary: ReceiverSummary[];
   methods_summary: MethodSummary[];

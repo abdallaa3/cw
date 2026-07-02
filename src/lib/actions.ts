@@ -13,6 +13,7 @@ import {
   deleteGroup,
   deletePayment,
   deleteStudent,
+  listPayments,
   renewStudent,
   updateCashEntry,
   updateGroup,
@@ -96,6 +97,17 @@ export async function renewStudentAction(oldStudentId: string, payload: Record<s
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────
+
+// Fetch all payments for a single student — used by the payment-tracking modal.
+export async function getStudentPaymentsAction(studentId: string): Promise<Result> {
+  try {
+    const { data } = await listPayments({ student_id: studentId });
+    return { ok: true, data };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 export async function savePaymentAction(id: string | null, payload: Record<string, unknown>): Promise<Result> {
   try {
     const data = id ? await updatePayment(id, payload) : await createPayment(payload);
